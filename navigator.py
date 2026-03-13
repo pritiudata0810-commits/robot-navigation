@@ -57,9 +57,9 @@ class CyberpunkTheme:
         if intensity == 0:
             return f"[dim]{char}[/dim]"
         elif intensity < 3:
-            return f"[color({CyberpunkTheme.DARK_BLUE})]{char}[/color]"
+            return f"[{CyberpunkTheme.DARK_BLUE}]{char}[/{CyberpunkTheme.DARK_BLUE}]"
         else:
-            return f"[color({CyberpunkTheme.CYAN})]{char}[/color]"
+            return f"[{CyberpunkTheme.CYAN}]{char}[/{CyberpunkTheme.CYAN}]"
 
 
 @dataclass
@@ -440,10 +440,10 @@ class Navigator:
         
         # Cyberpunk welcome banner
         banner = Panel(
-            "[bold color(#00FFFF)]⚡ MISSION CONTROL OVERRIDE ⚡[/bold color(#00FFFF)]\n"
-            "[color(#FF00FF)]CYBERPUNK NAVIGATION SYSTEM[/color(#FF00FF)]\n"
-            "[dim color(#0088FF)]A* Pathfinding with Fog of War[/dim color(#0088FF)]",
-            border_style="color(#00FFFF)",
+            "[bold #00FFFF]⚡ MISSION CONTROL OVERRIDE ⚡[/bold #00FFFF]\n"
+            "[#FF00FF]CYBERPUNK NAVIGATION SYSTEM[/#FF00FF]\n"
+            "[dim #0088FF]A* Pathfinding with Fog of War[/dim #0088FF]",
+            border_style="#00FFFF",
             padding=(1, 2),
             expand=False
         )
@@ -452,17 +452,17 @@ class Navigator:
         
         # Difficulty selection
         difficulty_panel = Panel(
-            "[bold color(#00FF00)]< DIFFICULTY CONFIGURATION >[/bold color(#00FF00)]\n"
+            "[bold #00FF00]< DIFFICULTY CONFIGURATION >[/bold #00FF00]\n"
             "[cyan]Easy[/cyan]     → 10% walls\n"
             "[yellow]Medium[/yellow]  → 25% walls\n"
-            "[color(#FF0000)]Hard[/color(#FF0000)]     → 40% walls",
-            border_style="color(#00FF00)",
+            "[#FF0000]Hard[/#FF0000]     → 40% walls",
+            border_style="#00FF00",
             padding=(1, 2)
         )
         self.console.print(difficulty_panel)
         
         difficulty_input = Prompt.ask(
-            "[bold color(#00FFFF)]DIFFICULTY[/bold color(#00FFFF)]",
+            "[bold #00FFFF]DIFFICULTY[/bold #00FFFF]",
             choices=["easy", "medium", "hard"],
             default="medium"
         ).lower()
@@ -473,22 +473,22 @@ class Navigator:
             "hard": Difficulty.HARD
         }
         selected_difficulty = difficulty_map[difficulty_input]
-        self.console.print(f"[color(#00FF00)]✓ {selected_difficulty.name.upper()}[/color(#00FF00)]")
+        self.console.print(f"[#00FF00]✓ {selected_difficulty.name.upper()}[/#00FF00]")
         self.console.print()
         
         # Speed selection
         speed_panel = Panel(
-            "[bold color(#FF00FF)]< ANIMATION SPEED >[/bold color(#FF00FF)]\n"
+            "[bold #FF00FF]< ANIMATION SPEED >[/bold #FF00FF]\n"
             "[cyan]Slow[/cyan]    → 1.0s per step\n"
             "[yellow]Normal[/yellow]  → 0.5s per step\n"
-            "[color(#00FF00)]Fast[/color(#00FF00)]   → 0.2s per step",
-            border_style="color(#FF00FF)",
+            "[#00FF00]Fast[/#00FF00]   → 0.2s per step",
+            border_style="#FF00FF",
             padding=(1, 2)
         )
         self.console.print(speed_panel)
         
         speed_input = Prompt.ask(
-            "[bold color(#00FFFF)]SPEED[/bold color(#00FFFF)]",
+            "[bold #00FFFF]SPEED[/bold #00FFFF]",
             choices=["slow", "normal", "fast"],
             default="normal"
         ).lower()
@@ -499,10 +499,10 @@ class Navigator:
             "fast": Speed.FAST
         }
         selected_speed = speed_map[speed_input]
-        self.console.print(f"[color(#00FF00)]✓ {selected_speed.name.upper()}[/color(#00FF00)]")
+        self.console.print(f"[#00FF00]✓ {selected_speed.name.upper()}[/#00FF00]")
         self.console.print()
         
-        self.console.print("[bold color(#FF00FF)]>> INITIALIZING MISSION CONTROL <<[/bold color(#FF00FF)]")
+        self.console.print("[bold #FF00FF]>> INITIALIZING MISSION CONTROL <<[/bold #FF00FF]")
         
         return GameConfig(difficulty=selected_difficulty, speed=selected_speed)
     
@@ -595,20 +595,20 @@ class Navigator:
                 # Robot
                 if pos == self.game_state.robot_pos:
                     char = "🤖"
-                    style = "bold color(#00FFFF)"
+                    style = "bold #00FFFF"
                 # Goal
                 elif pos == self.grid.goal_pos:
                     char = "🏁"
-                    style = "bold color(#FF00FF)"
+                    style = "bold #FF00FF"
                 # Hazards
                 elif any(int(h.x) == x and int(h.y) == y for h in self.hazards):
                     char = "✕"
-                    style = "bold color(#FF0000)"
+                    style = "bold #FF0000"
                 # Wall
                 elif self.grid.grid[y][x]:
                     if pos in self.game_state.discovered_tiles:
                         char = "█"
-                        style = "color(#0088FF)"
+                        style = "#0088FF"
                     else:
                         char = "·"
                         style = "dim"
@@ -619,19 +619,19 @@ class Navigator:
                     char = particles[trail_age % 3]
                     intensity = max(0, 3 - (trail_age // 2))
                     if intensity > 0:
-                        style = f"color({CyberpunkTheme.depth_color(min(intensity, 2))})"
+                        style = f"{CyberpunkTheme.depth_color(min(intensity, 2))}"
                 # A* search frontier (flickering yellow)
                 elif pos in self.search_frontier and self.animation_state.flicker_state:
                     char = "·"
-                    style = "color(#FFFF00) dim"
+                    style = "#FFFF00 dim"
                 # Explored nodes
                 elif pos in self.game_state.metrics.explored_nodes:
                     if pos in self.game_state.discovered_tiles:
                         char = "·"
                         if glow_intensity > 0:
-                            style = f"color({CyberpunkTheme.depth_color(glow_intensity - 1)})"
+                            style = f"{CyberpunkTheme.depth_color(glow_intensity - 1)}"
                         else:
-                            style = "dim color(#0088FF)"
+                            style = "dim #0088FF"
                     else:
                         char = "·"
                         style = "dim"
@@ -640,16 +640,16 @@ class Navigator:
                     if pos in self.game_state.discovered_tiles:
                         char = "·"
                         if glow_intensity > 0:
-                            style = f"color({CyberpunkTheme.depth_color(glow_intensity - 1)})"
+                            style = f"{CyberpunkTheme.depth_color(glow_intensity - 1)}"
                         else:
-                            style = "dim color(#00FFFF)"
+                            style = "dim #00FFFF"
                     else:
                         char = "·"
                         style = "dim"
                 
                 # Apply radar pulse highlight
                 if in_pulse and char != "🤖" and char != "🏁":
-                    style = "bold color(#00FFFF)"
+                    style = "bold #00FFFF"
                 
                 # Apply style
                 if style:
@@ -681,7 +681,7 @@ class Navigator:
         
         # Display last 8 lines
         stream_lines = self.hex_stream[-8:]
-        return "\n".join([f"[color(#00FFFF)]{h}[/color(#00FFFF)]" for h in stream_lines])
+        return "\n".join([f"[#00FFFF]{h}[/#00FFFF]" for h in stream_lines])
     
     def render_bar_charts(self) -> str:
         """Render ASCII bar charts for right panel"""
@@ -705,12 +705,12 @@ class Navigator:
         eff_bar = "▒" * min(12, int(metrics.efficiency / 10))
         
         content = (
-            f"[color(#00FF00)]PROGRESS[/color(#00FF00)]\n"
-            f"[color(#00FFFF)]{progress_bar}[/color(#00FFFF)] {progress:.0f}%\n\n"
-            f"[color(#FF00FF)]NODES[/color(#FF00FF)]\n"
-            f"[color(#FF00FF)]{explored_bar}[/color(#FF00FF)] {metrics.nodes_explored}\n\n"
-            f"[color(#0088FF)]EFFICIENCY[/color(#0088FF)]\n"
-            f"[color(#0088FF)]{eff_bar}[/color(#0088FF)] {metrics.efficiency:.1f}%"
+            f"[#00FF00]PROGRESS[/#00FF00]\n"
+            f"[#00FFFF]{progress_bar}[/#00FFFF] {progress:.0f}%\n\n"
+            f"[#FF00FF]NODES[/#FF00FF]\n"
+            f"[#FF00FF]{explored_bar}[/#FF00FF] {metrics.nodes_explored}\n\n"
+            f"[#0088FF]EFFICIENCY[/#0088FF]\n"
+            f"[#0088FF]{eff_bar}[/#0088FF] {metrics.efficiency:.1f}%"
         )
         
         return content
@@ -727,7 +727,7 @@ class Navigator:
         for hazard in self.hazards:
             if hazard.distance_to(rx, ry) < 4:
                 if self.animation_state.flicker_state:
-                    hazard_alert = " [bold color(#FF0000)]⚠ RED ALERT ⚠[/bold color(#FF0000)]"
+                    hazard_alert = " [bold #FF0000]⚠ RED ALERT ⚠[/bold #FF0000]"
                 break
         
         # Coordinate mapping progress
@@ -735,9 +735,9 @@ class Navigator:
         coord_bar = "▓" * int(coord_progress * 10) + "░" * (10 - int(coord_progress * 10))
         
         telemetry = (
-            f"[color(#00FFFF)]▐ SATELLITE LINK: {link_status}[/color(#00FFFF)] │ "
-            f"[color(#FF00FF)]CPU: {cpu_load}%[/color(#FF00FF)] │ "
-            f"[color(#00FF00)]COORD [{coord_bar}][/color(#00FF00)]{hazard_alert}"
+            f"[#00FFFF]▐ SATELLITE LINK: {link_status}[/#00FFFF] │ "
+            f"[#FF00FF]CPU: {cpu_load}%[/#FF00FF] │ "
+            f"[#00FF00]COORD [{coord_bar}][/#00FF00]{hazard_alert}"
         )
         
         return telemetry
@@ -751,15 +751,15 @@ class Navigator:
         metrics = self.game_state.metrics
         
         sidebar_content = (
-            "[bold color(#FF00FF)]< TELEMETRY >[/bold color(#FF00FF)]\n"
-            f"[color(#00FFFF)]POS[/color(#00FFFF)]: ({x:2d}, {y:2d})\n"
-            f"[color(#00FFFF)]STEPS[/color(#00FFFF)]: {self.game_state.steps}/{metrics.path_length}\n"
-            f"[color(#00FFFF)]TIME[/color(#00FFFF)]: {metrics.computation_time_ms:.1f}ms\n\n"
+            "[bold #FF00FF]< TELEMETRY >[/bold #FF00FF]\n"
+            f"[#00FFFF]POS[/#00FFFF]: ({x:2d}, {y:2d})\n"
+            f"[#00FFFF]STEPS[/#00FFFF]: {self.game_state.steps}/{metrics.path_length}\n"
+            f"[#00FFFF]TIME[/#00FFFF]: {metrics.computation_time_ms:.1f}ms\n\n"
         )
         
         sidebar_content += self.render_bar_charts()
         
-        return Panel(sidebar_content, border_style="color(#FF00FF)", padding=(1, 1))
+        return Panel(sidebar_content, border_style="#FF00FF", padding=(1, 1))
     
     def render_display(self) -> Layout:
         """
@@ -778,8 +778,8 @@ class Navigator:
         # Left panel: Hex stream
         hex_panel = Panel(
             self.render_hex_stream(),
-            title="[bold color(#00FFFF)]HEX STREAM[/bold color(#00FFFF)]",
-            border_style="color(#00FFFF)",
+            title="[bold #00FFFF]HEX STREAM[/bold #00FFFF]",
+            border_style="#00FFFF",
             padding=(0, 0)
         )
         layout["left"].update(hex_panel)
@@ -787,8 +787,8 @@ class Navigator:
         # Center panel: Grid
         grid_content = Panel(
             self.render_grid(),
-            title="[bold color(#00FF00)]SECTOR MAP[/bold color(#00FF00)]",
-            border_style="color(#00FF00)",
+            title="[bold #00FF00]SECTOR MAP[/bold #00FF00]",
+            border_style="#00FF00",
             padding=(0, 0)
         )
         layout["center"].update(grid_content)
@@ -848,7 +848,7 @@ class Navigator:
             """Render layout with telemetry bar on top"""
             layout = Layout()
             layout.split_column(
-                Layout(Panel(self.render_telemetry_bar(), border_style="color(#FF00FF)", padding=(0, 1)), size=3),
+                Layout(Panel(self.render_telemetry_bar(), border_style="#FF00FF", padding=(0, 1)), size=3),
                 Layout(self.render_display())
             )
             return layout
@@ -906,18 +906,18 @@ class Navigator:
         
         # Create glitch effect with multiple colored layers
         glitch_lines = [
-            "[bold color(#FF00FF)]███████████████████████████████████[/bold color(#FF00FF)]",
-            "[bold color(#00FFFF)]█                                   █[/bold color(#00FFFF)]",
-            "[bold color(#FF00FF)]█  ███████╗██╗   ██╗███████╗████████╗█[/bold color(#FF00FF)]",
-            "[bold color(#00FF00)]█  ██╔════╝╚██╗ ██╔╝██╔════╝╚══██╔══╝█[/bold color(#00FF00)]",
-            "[bold color(#00FFFF)]█  ███████╗ ╚████╔╝ ███████╗   ██║   █[/bold color(#00FFFF)]",
-            "[bold color(#FF00FF)]█  ╚════██║  ╚██╔╝  ╚════██║   ██║   █[/bold color(#FF00FF)]",
-            "[bold color(#00FF00)]█  ███████║   ██║   ███████║   ██║   █[/bold color(#00FF00)]",
-            "[bold color(#00FFFF)]█  ╚══════╝   ╚═╝   ╚══════╝   ╚═╝   █[/bold color(#00FFFF)]",
-            "[bold color(#FF00FF)]█                                   █[/bold color(#FF00FF)]",
-            "[bold color(#00FFFF)]█  [bold color(#00FF00)]MISSION CONTROL CLEAR[/bold color(#00FF00)]  █[/bold color(#00FFFF)]",
-            "[bold color(#FF00FF)]█                                   █[/bold color(#FF00FF)]",
-            "[bold color(#00FFFF)]███████████████████████████████████[/bold color(#00FFFF)]",
+            "[bold #FF00FF]███████████████████████████████████[/bold #FF00FF]",
+            "[bold #00FFFF]█                                   █[/bold #00FFFF]",
+            "[bold #FF00FF]█  ███████╗██╗   ██╗███████╗████████╗█[/bold #FF00FF]",
+            "[bold #00FF00]█  ██╔════╝╚██╗ ██╔╝██╔════╝╚══██╔══╝█[/bold #00FF00]",
+            "[bold #00FFFF]█  ███████╗ ╚████╔╝ ███████╗   ██║   █[/bold #00FFFF]",
+            "[bold #FF00FF]█  ╚════██║  ╚██╔╝  ╚════██║   ██║   █[/bold #FF00FF]",
+            "[bold #00FF00]█  ███████║   ██║   ███████║   ██║   █[/bold #00FF00]",
+            "[bold #00FFFF]█  ╚══════╝   ╚═╝   ╚══════╝   ╚═╝   █[/bold #00FFFF]",
+            "[bold #FF00FF]█                                   █[/bold #FF00FF]",
+            "[bold #00FFFF]█  [bold #00FF00]MISSION CONTROL CLEAR[/bold #00FF00]  █[/bold #00FFFF]",
+            "[bold #FF00FF]█                                   █[/bold #FF00FF]",
+            "[bold #00FFFF]███████████████████████████████████[/bold #00FFFF]",
         ]
         
         for line in glitch_lines:
@@ -926,9 +926,9 @@ class Navigator:
         self.console.print()
         
         # Mission summary table
-        summary = Table(title="[bold color(#00FF00)]MISSION SUMMARY[/bold color(#00FF00)]", border_style="color(#FF00FF)")
-        summary.add_column("METRIC", style="color(#00FFFF)")
-        summary.add_column("VALUE", style="color(#00FF00)")
+        summary = Table(title="[bold #00FF00]MISSION SUMMARY[/bold #00FF00]", border_style="#FF00FF")
+        summary.add_column("METRIC", style="#00FFFF")
+        summary.add_column("VALUE", style="#00FF00")
         
         summary.add_row("Total Steps", str(self.game_state.steps))
         summary.add_row("Path Length", str(self.game_state.metrics.path_length))
@@ -938,7 +938,7 @@ class Navigator:
         
         self.console.print(summary)
         self.console.print()
-        self.console.print("[bold color(#00FF00)]✓ MISSION OBJECTIVE COMPLETE ✓[/bold color(#00FF00)]", justify="center")
+        self.console.print("[bold #00FF00]✓ MISSION OBJECTIVE COMPLETE ✓[/bold #00FF00]", justify="center")
     
     def run(self) -> None:
         """Main entry point"""
