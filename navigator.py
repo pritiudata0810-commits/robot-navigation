@@ -1,15 +1,18 @@
 """
+CYBERPUNK MISSION CONTROL DASHBOARD
 Robot Navigation Simulator with A* Pathfinding & Fog of War
 A professional TUI-based game using Rich library featuring:
 - A* pathfinding with explored node tracking
-- Difficulty selection and animation speed control
-- Fog of war (sensor range) with discovered tiles tracking
-- Real-time visualization with Rich library
-- Performance metrics (nodes explored, efficiency, computation time)
+- 3-column cyberpunk layout with real-time telemetry
+- Neon color palette with 3-layer depth lighting
+- Radar pulses, particle trails, and heatmap effects
+- Dynamic hazards and A* search frontier visualization
+- 50ms frame updates for smooth 20fps animation
 """
 
 import random
 import time
+import math
 from typing import List, Tuple, Set, Dict, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -21,12 +24,93 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.layout import Layout
 from rich.prompt import Prompt, Confirm
-import math
+from rich.text import Text
+from rich.segment import Segment
+
+
+# ============================================================================
+# CYBERPUNK THEME & EFFECTS ENGINE
+# ============================================================================
+
+class CyberpunkTheme:
+    """Neon color palette and visual effects configuration"""
+    
+    # Neon colors
+    CYAN = "#00FFFF"
+    MAGENTA = "#FF00FF"
+    NEON_GREEN = "#00FF00"
+    BRIGHT_BLUE = "#0088FF"
+    DEEP_PURPLE = "#330033"
+    DARK_BLUE = "#001133"
+    RED_ALERT = "#FF0000"
+    YELLOW_FLICKER = "#FFFF00"
+    
+    @staticmethod
+    def depth_color(brightness_level: int) -> str:
+        """Return color based on depth (0=bright neon, 1=dim blue, 2=deep purple)"""
+        colors = ["#00FFFF", "#0066CC", "#330033"]
+        return colors[min(brightness_level, 2)]
+    
+    @staticmethod
+    def glow_char(char: str, intensity: int) -> str:
+        """Apply color intensity to character (0-5 levels)"""
+        if intensity == 0:
+            return f"[dim]{char}[/dim]"
+        elif intensity < 3:
+            return f"[color({CyberpunkTheme.DARK_BLUE})]{char}[/color]"
+        else:
+            return f"[color({CyberpunkTheme.CYAN})]{char}[/color]"
+
+
+@dataclass
+class AnimationState:
+    """Track animation frame state for effects"""
+    frame_count: int = 0
+    pulse_radius: float = 0.0
+    flicker_state: bool = False
+    scanline_offset: int = 0
+    time_ms: float = 0.0
+    
+    def tick(self, dt_ms: float = 50) -> None:
+        """Advance animation by one frame"""
+        self.frame_count += 1
+        self.time_ms += dt_ms
+        self.pulse_radius = (self.frame_count % 20) / 5.0
+        self.flicker_state = (self.frame_count // 5) % 2 == 0
+        self.scanline_offset = self.frame_count % 4
+
+
+@dataclass
+class Hazard:
+    """Dynamic moving hazard with collision detection"""
+    x: float
+    y: float
+    vx: float
+    vy: float
+    active: bool = True
+    
+    def update(self, grid_size: int) -> None:
+        """Update hazard position with boundary wrapping"""
+        self.x += self.vx
+        self.y += self.vy
+        
+        # Bounce off boundaries
+        if self.x < 0 or self.x >= grid_size:
+            self.vx *= -1
+            self.x = max(0, min(grid_size - 1, self.x))
+        if self.y < 0 or self.y >= grid_size:
+            self.vy *= -1
+            self.y = max(0, min(grid_size - 1, self.y))
+    
+    def distance_to(self, x: int, y: int) -> float:
+        """Calculate distance to a position"""
+        return math.sqrt((self.x - x) ** 2 + (self.y - y) ** 2)
 
 
 # ============================================================================
 # ENUMS & DATA CLASSES
 # ============================================================================
+
 
 class Difficulty(Enum):
     """Difficulty levels with corresponding wall percentages"""
@@ -333,7 +417,7 @@ class FogOfWar:
 # ============================================================================
 
 class Navigator:
-    """Main game controller and UI renderer"""
+    """Main game controller and UI renderer with cyberpunk effects"""
     
     def __init__(self):
         self.console = Console()
@@ -342,35 +426,43 @@ class Navigator:
         self.game_state: Optional[GameState] = None
         self.astar: Optional[AStar] = None
         self.fog_of_war: Optional[FogOfWar] = None
+        self.animation_state = AnimationState()
+        self.hazards: List[Hazard] = []
+        self.particle_trails: Dict[Tuple[int, int], int] = {}  # pos -> age
+        self.heatmap: Dict[Tuple[int, int], int] = {}  # pos -> intensity (0-5)
+        self.hex_stream: List[str] = []
+        self.search_frontier: Set[Tuple[int, int]] = set()
+        self.last_frame_time = time.time()
     
     def show_main_menu(self) -> GameConfig:
-        """Display main menu and get user selections"""
+        """Display cyberpunk-themed main menu and get user selections"""
         self.console.clear()
         
-        # Welcome panel
-        welcome = Panel(
-            "[bold cyan]🤖 ROBOT NAVIGATION SIMULATOR 🤖[/bold cyan]\n"
-            "[yellow]A* Pathfinding with Fog of War[/yellow]",
-            border_style="bright_blue",
+        # Cyberpunk welcome banner
+        banner = Panel(
+            "[bold color(#00FFFF)]⚡ MISSION CONTROL OVERRIDE ⚡[/bold color(#00FFFF)]\n"
+            "[color(#FF00FF)]CYBERPUNK NAVIGATION SYSTEM[/color(#FF00FF)]\n"
+            "[dim color(#0088FF)]A* Pathfinding with Fog of War[/dim color(#0088FF)]",
+            border_style="color(#00FFFF)",
             padding=(1, 2),
             expand=False
         )
-        self.console.print(welcome)
+        self.console.print(banner)
         self.console.print()
         
         # Difficulty selection
         difficulty_panel = Panel(
-            "[bold green]DIFFICULTY LEVELS[/bold green]\n"
-            "[cyan]Easy[/cyan]     → 10% walls (easier navigation)\n"
-            "[yellow]Medium[/yellow]  → 25% walls (balanced)\n"
-            "[red]Hard[/red]     → 40% walls (challenging)",
-            border_style="green",
+            "[bold color(#00FF00)]< DIFFICULTY CONFIGURATION >[/bold color(#00FF00)]\n"
+            "[cyan]Easy[/cyan]     → 10% walls\n"
+            "[yellow]Medium[/yellow]  → 25% walls\n"
+            "[color(#FF0000)]Hard[/color(#FF0000)]     → 40% walls",
+            border_style="color(#00FF00)",
             padding=(1, 2)
         )
         self.console.print(difficulty_panel)
         
         difficulty_input = Prompt.ask(
-            "[bold]Select Difficulty[/bold]",
+            "[bold color(#00FFFF)]DIFFICULTY[/bold color(#00FFFF)]",
             choices=["easy", "medium", "hard"],
             default="medium"
         ).lower()
@@ -381,22 +473,22 @@ class Navigator:
             "hard": Difficulty.HARD
         }
         selected_difficulty = difficulty_map[difficulty_input]
-        self.console.print(f"[green]✓ Difficulty: {selected_difficulty.name}[/green]")
+        self.console.print(f"[color(#00FF00)]✓ {selected_difficulty.name.upper()}[/color(#00FF00)]")
         self.console.print()
         
         # Speed selection
         speed_panel = Panel(
-            "[bold green]ANIMATION SPEED[/bold green]\n"
-            "[cyan]Slow[/cyan]    → 1.0s per step (watch carefully)\n"
-            "[yellow]Normal[/yellow]  → 0.5s per step (balanced)\n"
-            "[magenta]Fast[/magenta]   → 0.2s per step (quick view)",
-            border_style="green",
+            "[bold color(#FF00FF)]< ANIMATION SPEED >[/bold color(#FF00FF)]\n"
+            "[cyan]Slow[/cyan]    → 1.0s per step\n"
+            "[yellow]Normal[/yellow]  → 0.5s per step\n"
+            "[color(#00FF00)]Fast[/color(#00FF00)]   → 0.2s per step",
+            border_style="color(#FF00FF)",
             padding=(1, 2)
         )
         self.console.print(speed_panel)
         
         speed_input = Prompt.ask(
-            "[bold]Select Speed[/bold]",
+            "[bold color(#00FFFF)]SPEED[/bold color(#00FFFF)]",
             choices=["slow", "normal", "fast"],
             default="normal"
         ).lower()
@@ -407,15 +499,15 @@ class Navigator:
             "fast": Speed.FAST
         }
         selected_speed = speed_map[speed_input]
-        self.console.print(f"[green]✓ Speed: {selected_speed.name}[/green]")
+        self.console.print(f"[color(#00FF00)]✓ {selected_speed.name.upper()}[/color(#00FF00)]")
         self.console.print()
         
-        self.console.print("[bold blue]⏳ Initializing game...[/bold blue]")
+        self.console.print("[bold color(#FF00FF)]>> INITIALIZING MISSION CONTROL <<[/bold color(#FF00FF)]")
         
         return GameConfig(difficulty=selected_difficulty, speed=selected_speed)
     
     def initialize_game(self, config: GameConfig) -> None:
-        """Initialize grid, pathfinding, and game state"""
+        """Initialize grid, pathfinding, game state, and cyberpunk effects"""
         self.config = config
         
         # Create and populate grid
@@ -438,60 +530,220 @@ class Navigator:
         # Initial reveal (around start position)
         self.fog_of_war.reveal_around(*self.grid.start_pos)
         self.game_state.discovered_tiles = self.fog_of_war.discovered_tiles.copy()
+        
+        # Initialize cyberpunk effects
+        self.animation_state = AnimationState()
+        self._spawn_hazards()
+        self.particle_trails = {}
+        self.heatmap = {}
+        self.hex_stream = []
+        # Get explored nodes from metrics
+        self.search_frontier = self.game_state.metrics.explored_nodes.copy()
+    
+    def _spawn_hazards(self) -> None:
+        """Create 3 moving hazards at random positions"""
+        self.hazards = []
+        for _ in range(3):
+            while True:
+                x = random.randint(2, self.grid.size - 2)
+                y = random.randint(2, self.grid.size - 2)
+                if (x, y) not in [self.grid.start_pos, self.grid.goal_pos]:
+                    break
+            
+            # Random velocities
+            vx = random.choice([-0.3, -0.1, 0.1, 0.3])
+            vy = random.choice([-0.3, -0.1, 0.1, 0.3])
+            self.hazards.append(Hazard(float(x), float(y), vx, vy))
     
     def render_grid(self) -> str:
         """
-        Render the game grid with all visual elements.
-        
-        Returns:
-            String representation of the grid
+        Render the 20x20 game grid with cyberpunk effects:
+        - Neon glow heatmap
+        - Radar pulse circles
+        - Particle trails
+        - A* search frontier
+        - Hazards and scanlines
         """
         if not self.grid or not self.game_state:
             return ""
         
         grid_lines = []
+        rx, ry = self.game_state.robot_pos
+        
+        # Scanline for cyberpunk effect
+        scanline = "▒" if self.animation_state.scanline_offset % 2 == 0 else " "
         
         for y in range(self.grid.size):
             line = ""
             for x in range(self.grid.size):
                 pos = (x, y)
                 
-                # Robot position
+                # Calculate glow intensity from heatmap
+                glow_intensity = self.heatmap.get(pos, 0)
+                
+                # Radar pulse effect
+                in_pulse = False
+                if self.animation_state.pulse_radius > 0:
+                    dist = math.sqrt((x - rx) ** 2 + (y - ry) ** 2)
+                    if abs(dist - self.animation_state.pulse_radius) < 1.5:
+                        in_pulse = True
+                
+                # Determine what to render
+                char = " "
+                style = ""
+                
+                # Robot
                 if pos == self.game_state.robot_pos:
-                    line += "🤖"
-                # Goal position
+                    char = "🤖"
+                    style = "bold color(#00FFFF)"
+                # Goal
                 elif pos == self.grid.goal_pos:
-                    line += "🏁"
-                # Wall (only show if discovered)
+                    char = "🏁"
+                    style = "bold color(#FF00FF)"
+                # Hazards
+                elif any(int(h.x) == x and int(h.y) == y for h in self.hazards):
+                    char = "✕"
+                    style = "bold color(#FF0000)"
+                # Wall
                 elif self.grid.grid[y][x]:
                     if pos in self.game_state.discovered_tiles:
-                        line += "🧱"
+                        char = "█"
+                        style = "color(#0088FF)"
                     else:
-                        line += "⬛"  # Hidden wall (dark)
-                # Explored nodes (light grey dot)
+                        char = "·"
+                        style = "dim"
+                # Particle trail
+                elif pos in self.particle_trails:
+                    trail_age = self.particle_trails[pos]
+                    particles = ["⚡", "¤", "·"]
+                    char = particles[trail_age % 3]
+                    intensity = max(0, 3 - (trail_age // 2))
+                    if intensity > 0:
+                        style = f"color({CyberpunkTheme.depth_color(min(intensity, 2))})"
+                # A* search frontier (flickering yellow)
+                elif pos in self.search_frontier and self.animation_state.flicker_state:
+                    char = "·"
+                    style = "color(#FFFF00) dim"
+                # Explored nodes
                 elif pos in self.game_state.metrics.explored_nodes:
                     if pos in self.game_state.discovered_tiles:
-                        line += "·"
+                        char = "·"
+                        if glow_intensity > 0:
+                            style = f"color({CyberpunkTheme.depth_color(glow_intensity - 1)})"
+                        else:
+                            style = "dim color(#0088FF)"
                     else:
-                        line += "⬜"  # Hidden explored node
+                        char = "·"
+                        style = "dim"
                 # Regular path
                 else:
                     if pos in self.game_state.discovered_tiles:
-                        line += "🟦"
+                        char = "·"
+                        if glow_intensity > 0:
+                            style = f"color({CyberpunkTheme.depth_color(glow_intensity - 1)})"
+                        else:
+                            style = "dim color(#00FFFF)"
                     else:
-                        line += "⬜"  # Hidden path
+                        char = "·"
+                        style = "dim"
+                
+                # Apply radar pulse highlight
+                if in_pulse and char != "🤖" and char != "🏁":
+                    style = "bold color(#00FFFF)"
+                
+                # Apply style
+                if style:
+                    line += f"[{style}]{char}[/{style.split()[0]}]"
+                else:
+                    line += char
+                
+                # Scanline overlay
+                if y % 3 == 0:
+                    line += scanline
             
             grid_lines.append(line)
         
         return "\n".join(grid_lines)
     
-    def render_sidebar(self) -> Panel:
-        """
-        Render the sidebar panel with stats.
+    def render_hex_stream(self) -> str:
+        """Render scrolling hex-code sensor stream for left panel"""
+        # Generate or rotate hex stream
+        if len(self.hex_stream) < 10:
+            for _ in range(10):
+                hex_code = f"{random.randint(0, 255):02X}{random.randint(0, 255):02X}{random.randint(0, 255):02X}"
+                self.hex_stream.append(hex_code)
         
-        Returns:
-            Rich Panel with game statistics
-        """
+        # Rotate stream every few frames
+        if self.animation_state.frame_count % 3 == 0 and len(self.hex_stream) > 0:
+            self.hex_stream.pop(0)
+            hex_code = f"{random.randint(0, 255):02X}{random.randint(0, 255):02X}{random.randint(0, 255):02X}"
+            self.hex_stream.append(hex_code)
+        
+        # Display last 8 lines
+        stream_lines = self.hex_stream[-8:]
+        return "\n".join([f"[color(#00FFFF)]{h}[/color(#00FFFF)]" for h in stream_lines])
+    
+    def render_bar_charts(self) -> str:
+        """Render ASCII bar charts for right panel"""
+        if not self.game_state:
+            return ""
+        
+        x, y = self.game_state.robot_pos
+        metrics = self.game_state.metrics
+        progress = (self.game_state.current_path_index / max(metrics.path_length, 1)) * 100 if metrics.path_length > 0 else 0
+        
+        # Bar chart for progress
+        bar_width = 12
+        filled = int((progress / 100) * bar_width)
+        progress_bar = "█" * filled + "░" * (bar_width - filled)
+        
+        # Nodes explored normalized bar
+        nodes_max = max(1, metrics.nodes_explored)
+        explored_bar = "▓" * min(12, (metrics.nodes_explored // max(1, nodes_max // 12)))
+        
+        # Efficiency bar
+        eff_bar = "▒" * min(12, int(metrics.efficiency / 10))
+        
+        content = (
+            f"[color(#00FF00)]PROGRESS[/color(#00FF00)]\n"
+            f"[color(#00FFFF)]{progress_bar}[/color(#00FFFF)] {progress:.0f}%\n\n"
+            f"[color(#FF00FF)]NODES[/color(#FF00FF)]\n"
+            f"[color(#FF00FF)]{explored_bar}[/color(#FF00FF)] {metrics.nodes_explored}\n\n"
+            f"[color(#0088FF)]EFFICIENCY[/color(#0088FF)]\n"
+            f"[color(#0088FF)]{eff_bar}[/color(#0088FF)] {metrics.efficiency:.1f}%"
+        )
+        
+        return content
+    
+    def render_telemetry_bar(self) -> str:
+        """Render top telemetry bar with status info"""
+        # Satellite link status
+        link_status = "STABLE" if self.animation_state.flicker_state else "SIGNAL"
+        cpu_load = min(100, 30 + (self.animation_state.frame_count % 30))
+        
+        # Check for hazard alerts
+        hazard_alert = ""
+        rx, ry = self.game_state.robot_pos
+        for hazard in self.hazards:
+            if hazard.distance_to(rx, ry) < 4:
+                if self.animation_state.flicker_state:
+                    hazard_alert = " [bold color(#FF0000)]⚠ RED ALERT ⚠[/bold color(#FF0000)]"
+                break
+        
+        # Coordinate mapping progress
+        coord_progress = (self.animation_state.frame_count % 20) / 20
+        coord_bar = "▓" * int(coord_progress * 10) + "░" * (10 - int(coord_progress * 10))
+        
+        telemetry = (
+            f"[color(#00FFFF)]▐ SATELLITE LINK: {link_status}[/color(#00FFFF)] │ "
+            f"[color(#FF00FF)]CPU: {cpu_load}%[/color(#FF00FF)] │ "
+            f"[color(#00FF00)]COORD [{coord_bar}][/color(#00FF00)]{hazard_alert}"
+        )
+        
+        return telemetry
+    
+    def render_sidebar(self) -> Panel:
+        """Render right panel with statistics and charts"""
         if not self.game_state:
             return Panel("No game state")
         
@@ -499,73 +751,123 @@ class Navigator:
         metrics = self.game_state.metrics
         
         sidebar_content = (
-            "[bold cyan]📍 CURRENT POSITION[/bold cyan]\n"
-            f"X: {x:2d}  Y: {y:2d}\n\n"
-            
-            "[bold yellow]👣 MOVEMENT[/bold yellow]\n"
-            f"Total Steps: {self.game_state.steps}\n"
-            f"Path Length: {metrics.path_length}\n\n"
-            
-            "[bold magenta]📊 COMPUTATIONAL STATS[/bold magenta]\n"
-            f"Nodes Explored: {metrics.nodes_explored}\n"
-            f"Efficiency: {metrics.efficiency:.2f}%\n"
-            f"Time: {metrics.computation_time_ms:.2f}ms\n\n"
-            
-            "[bold green]🎯 STATUS[/bold green]\n"
+            "[bold color(#FF00FF)]< TELEMETRY >[/bold color(#FF00FF)]\n"
+            f"[color(#00FFFF)]POS[/color(#00FFFF)]: ({x:2d}, {y:2d})\n"
+            f"[color(#00FFFF)]STEPS[/color(#00FFFF)]: {self.game_state.steps}/{metrics.path_length}\n"
+            f"[color(#00FFFF)]TIME[/color(#00FFFF)]: {metrics.computation_time_ms:.1f}ms\n\n"
         )
         
-        if self.game_state.is_finished:
-            sidebar_content += "[green]✓ GOAL REACHED![/green]"
-        else:
-            progress = (self.game_state.current_path_index / max(metrics.path_length, 1)) * 100
-            sidebar_content += f"Progress: {progress:.0f}%"
+        sidebar_content += self.render_bar_charts()
         
-        return Panel(sidebar_content, border_style="blue", padding=(1, 1))
+        return Panel(sidebar_content, border_style="color(#FF00FF)", padding=(1, 1))
     
     def render_display(self) -> Layout:
         """
-        Create the main display layout.
-        
-        Returns:
-            Rich Layout object combining grid and sidebar
+        Create the 3-column cyberpunk layout:
+        Top: Telemetry bar
+        Left: Hex Stream | Center: Grid | Right: Charts
         """
+        # Main layout is 3-column: left, center, right
         layout = Layout()
         layout.split_row(
-            Layout(name="grid"),
-            Layout(name="sidebar", size=30)
+            Layout(name="left", size=18),
+            Layout(name="center"),
+            Layout(name="right", size=22)
         )
         
-        # Grid panel
+        # Left panel: Hex stream
+        hex_panel = Panel(
+            self.render_hex_stream(),
+            title="[bold color(#00FFFF)]HEX STREAM[/bold color(#00FFFF)]",
+            border_style="color(#00FFFF)",
+            padding=(0, 0)
+        )
+        layout["left"].update(hex_panel)
+        
+        # Center panel: Grid
         grid_content = Panel(
             self.render_grid(),
-            title="[bold]Game Grid[/bold]",
-            border_style="cyan",
-            padding=(0, 1)
+            title="[bold color(#00FF00)]SECTOR MAP[/bold color(#00FF00)]",
+            border_style="color(#00FF00)",
+            padding=(0, 0)
         )
-        layout["grid"].update(grid_content)
+        layout["center"].update(grid_content)
         
-        # Sidebar panel
-        layout["sidebar"].update(self.render_sidebar())
+        # Right panel: Stats and charts
+        layout["right"].update(self.render_sidebar())
         
         return layout
     
+    def _update_effects(self) -> None:
+        """Update all animation effects each frame"""
+        self.animation_state.tick(50)  # 50ms per frame
+        
+        # Update particle trails - age them
+        aged_trails = []
+        for pos, age in self.particle_trails.items():
+            if age < 6:
+                aged_trails.append((pos, age + 1))
+        self.particle_trails = dict(aged_trails)
+        
+        # Update heatmap - fade intensity
+        aged_heatmap = {}
+        for pos, intensity in self.heatmap.items():
+            if intensity > 0:
+                aged_heatmap[pos] = intensity - 1
+        self.heatmap = aged_heatmap
+        
+        # Update hazards
+        for hazard in self.hazards:
+            hazard.update(self.grid.size)
+        
+        # Add particle trail at robot position
+        robot_pos = self.game_state.robot_pos
+        if robot_pos not in self.particle_trails:
+            self.particle_trails[robot_pos] = 0
+        
+        # Update heatmap around previous positions
+        for explored_pos in self.game_state.metrics.explored_nodes:
+            if explored_pos not in self.heatmap:
+                self.heatmap[explored_pos] = 5
+    
     def run_animation(self) -> None:
-        """Run the main animation loop"""
+        """
+        Run the main animation loop with 0.05s (50ms) frame updates.
+        Includes telemetry bar, hazard updates, and effect animations.
+        """
         if not self.game_state or not self.config:
             return
         
         self.console.clear()
         
-        # Live display
-        with Live(self.render_display(), refresh_per_second=10, console=self.console) as live:
+        # Use 0.05s frame timing (20fps equivalent)
+        frame_delay = 0.05
+        
+        # Create a wrapper renderfunction to include telemetry
+        def render_with_telemetry():
+            """Render layout with telemetry bar on top"""
+            layout = Layout()
+            layout.split_column(
+                Layout(Panel(self.render_telemetry_bar(), border_style="color(#FF00FF)", padding=(0, 1)), size=3),
+                Layout(self.render_display())
+            )
+            return layout
+        
+        # Live display with high refresh rate
+        with Live(render_with_telemetry(), refresh_per_second=20, console=self.console) as live:
             # Initial reveal around start
             self.fog_of_war.reveal_around(*self.grid.start_pos)
             self.game_state.discovered_tiles = self.fog_of_war.discovered_tiles.copy()
             
             # Animation loop
             while not self.game_state.is_finished:
+                frame_start = time.time()
+                
+                # Update effects and hazards
+                self._update_effects()
+                
                 # Update display
-                live.update(self.render_display())
+                live.update(render_with_telemetry())
                 
                 # Move robot
                 self.game_state.move_to_next()
@@ -575,25 +877,68 @@ class Navigator:
                     self.fog_of_war.reveal_around(*self.game_state.robot_pos)
                     self.game_state.discovered_tiles = self.fog_of_war.discovered_tiles.copy()
                 
-                # Sleep based on animation speed
-                time.sleep(self.config.speed.value)
+                # Maintain frame rate
+                elapsed = time.time() - frame_start
+                move_delay = self.config.speed.value
+                
+                # Inter-frame updates (for smooth animation between moves)
+                remaining_delay = move_delay - elapsed
+                frames_in_move = max(1, int(remaining_delay / frame_delay))
+                
+                for _ in range(frames_in_move):
+                    frame_start = time.time()
+                    self._update_effects()
+                    live.update(render_with_telemetry())
+                    
+                    frame_elapsed = time.time() - frame_start
+                    if frame_elapsed < frame_delay:
+                        time.sleep(frame_delay - frame_elapsed)
             
-            # Final update
-            live.update(self.render_display())
+            # Final update and celebration
+            live.update(render_with_telemetry())
         
-        # Show completion message
-        self.console.print("\n")
-        completion_panel = Panel(
-            "[bold green]🎉 GOAL REACHED! 🎉[/bold green]\n"
-            f"[yellow]Total Steps: {self.game_state.steps}[/yellow]\n"
-            f"[cyan]Path Length: {self.game_state.metrics.path_length}[/cyan]\n"
-            f"[magenta]Nodes Explored: {self.game_state.metrics.nodes_explored}[/magenta]\n"
-            f"[blue]Efficiency: {self.game_state.metrics.efficiency:.2f}%[/blue]\n"
-            f"[green]Computation Time: {self.game_state.metrics.computation_time_ms:.2f}ms[/green]",
-            border_style="green",
-            padding=(1, 2)
-        )
-        self.console.print(completion_panel)
+        # Show cyberpunk success celebration
+        self._show_success_celebration()
+    
+    def _show_success_celebration(self) -> None:
+        """Display full-screen glitch-text success banner"""
+        self.console.clear()
+        
+        # Create glitch effect with multiple colored layers
+        glitch_lines = [
+            "[bold color(#FF00FF)]███████████████████████████████████[/bold color(#FF00FF)]",
+            "[bold color(#00FFFF)]█                                   █[/bold color(#00FFFF)]",
+            "[bold color(#FF00FF)]█  ███████╗██╗   ██╗███████╗████████╗█[/bold color(#FF00FF)]",
+            "[bold color(#00FF00)]█  ██╔════╝╚██╗ ██╔╝██╔════╝╚══██╔══╝█[/bold color(#00FF00)]",
+            "[bold color(#00FFFF)]█  ███████╗ ╚████╔╝ ███████╗   ██║   █[/bold color(#00FFFF)]",
+            "[bold color(#FF00FF)]█  ╚════██║  ╚██╔╝  ╚════██║   ██║   █[/bold color(#FF00FF)]",
+            "[bold color(#00FF00)]█  ███████║   ██║   ███████║   ██║   █[/bold color(#00FF00)]",
+            "[bold color(#00FFFF)]█  ╚══════╝   ╚═╝   ╚══════╝   ╚═╝   █[/bold color(#00FFFF)]",
+            "[bold color(#FF00FF)]█                                   █[/bold color(#FF00FF)]",
+            "[bold color(#00FFFF)]█  [bold color(#00FF00)]MISSION CONTROL CLEAR[/bold color(#00FF00)]  █[/bold color(#00FFFF)]",
+            "[bold color(#FF00FF)]█                                   █[/bold color(#FF00FF)]",
+            "[bold color(#00FFFF)]███████████████████████████████████[/bold color(#00FFFF)]",
+        ]
+        
+        for line in glitch_lines:
+            self.console.print(line, justify="center")
+        
+        self.console.print()
+        
+        # Mission summary table
+        summary = Table(title="[bold color(#00FF00)]MISSION SUMMARY[/bold color(#00FF00)]", border_style="color(#FF00FF)")
+        summary.add_column("METRIC", style="color(#00FFFF)")
+        summary.add_column("VALUE", style="color(#00FF00)")
+        
+        summary.add_row("Total Steps", str(self.game_state.steps))
+        summary.add_row("Path Length", str(self.game_state.metrics.path_length))
+        summary.add_row("Nodes Explored", str(self.game_state.metrics.nodes_explored))
+        summary.add_row("Efficiency", f"{self.game_state.metrics.efficiency:.2f}%")
+        summary.add_row("Computation Time", f"{self.game_state.metrics.computation_time_ms:.2f}ms")
+        
+        self.console.print(summary)
+        self.console.print()
+        self.console.print("[bold color(#00FF00)]✓ MISSION OBJECTIVE COMPLETE ✓[/bold color(#00FF00)]", justify="center")
     
     def run(self) -> None:
         """Main entry point"""
