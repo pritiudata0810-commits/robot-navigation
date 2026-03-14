@@ -5,9 +5,10 @@ Professional AI Simulation Dashboard
 A high-tech TUI simulation using Rich library featuring:
 - Dynamic random grid generation based on difficulty
 - A* pathfinding algorithm (AI-powered navigation)
-- 3-column professional dashboard layout
-- Real-time telemetry and live move logs
-- Clean, professional cyberpunk-inspired UI
+- 3-column professional dashboard layout with proper spacing
+- Real-time telemetry and live move logs with Live refresh
+- Clean, professional cyberpunk-inspired UI (Cyan/Magenta palette)
+- Multi-simulation loop with replay capability
 """
 
 import random
@@ -24,6 +25,7 @@ from rich.layout import Layout
 from rich.text import Text
 from rich.columns import Columns
 from rich.align import Align
+from rich.prompt import Prompt
 
 
 # ============================================================================
@@ -255,12 +257,12 @@ class DashboardRenderer:
         )
     
     def render_navigation_grid(self, grid: NavigationGrid, state: SimulationState) -> Panel:
-        """Render the main navigation grid (middle column)"""
+        """Render the main navigation grid (middle column) with 'large' styling"""
         grid_text = Text()
         grid_text.append("NAVIGATION GRID\n", style=f"bold {ProfessionalTheme.MAGENTA}")
-        grid_text.append("─" * 30 + "\n", style=ProfessionalTheme.DARK_BLUE)
+        grid_text.append("─" * 40 + "\n", style=ProfessionalTheme.DARK_BLUE)
         
-        # Build grid display
+        # Build grid display with proper spacing
         path_set = set(state.path_taken)
         
         for y in range(grid.size):
@@ -268,24 +270,26 @@ class DashboardRenderer:
                 current_pos = Point(x, y)
                 
                 if current_pos == grid.start:
-                    grid_text.append("🤖 ", style=ProfessionalTheme.CYAN)
+                    grid_text.append("🤖 ", style=f"bold {ProfessionalTheme.CYAN}")
                 elif current_pos == state.robot_pos:
-                    grid_text.append("⭐ ", style=ProfessionalTheme.YELLOW)
+                    grid_text.append("⭐ ", style=f"bold {ProfessionalTheme.YELLOW}")
                 elif current_pos == grid.goal:
-                    grid_text.append("🎯 ", style=ProfessionalTheme.RED)
+                    grid_text.append("🎯 ", style=f"bold {ProfessionalTheme.RED}")
                 elif grid.is_wall(x, y):
-                    grid_text.append("🧱 ", style=ProfessionalTheme.WHITE)
+                    grid_text.append("🧱 ", style=f"bold {ProfessionalTheme.WHITE}")
                 elif current_pos in path_set:
-                    grid_text.append("🟩 ", style=ProfessionalTheme.NEON_GREEN)
+                    # Place path marker exactly on cell robot left
+                    grid_text.append("🟩 ", style=f"bold {ProfessionalTheme.NEON_GREEN}")
                 else:
-                    grid_text.append("  ", style="dim")
+                    # Replace empty spaces with underscores
+                    grid_text.append("_  ", style="dim")
             
             grid_text.append("\n")
         
         return Panel(
             grid_text,
             border_style=ProfessionalTheme.MAGENTA,
-            padding=(1, 1),
+            padding=(1, 2),
             expand=True
         )
     
@@ -324,45 +328,50 @@ class DashboardRenderer:
             width=35
         )
     
-    def render_dashboard(self, grid: NavigationGrid, state: SimulationState, speed: Speed) -> Layout:
-        """Render complete 3-column dashboard"""
-        layout = Layout()
-        layout.split_row(
-            Layout(self.render_live_logs(state), name="left"),
-            Layout(self.render_navigation_grid(grid, state), name="middle"),
-            Layout(self.render_telemetry(state, speed), name="right")
-        )
-        return layout
+    def render_dashboard(self, grid: NavigationGrid, state: SimulationState, speed: Speed) -> Columns:
+        """Render complete 3-column dashboard with proper spacing (Logs | Grid | Telemetry)"""
+        # Left column: Live Logs
+        logs_panel = self.render_live_logs(state)
+        
+        # Middle column: Navigation Grid (60% width)
+        grid_panel = self.render_navigation_grid(grid, state)
+        
+        # Right column: Telemetry
+        telemetry_panel = self.render_telemetry(state, speed)
+        
+        # Use Columns with padding to ensure clear gaps between columns
+        return Columns([logs_panel, grid_panel, telemetry_panel], equal=False, expand=True)
     
     def render_mission_success(self, grid: NavigationGrid, state: SimulationState, 
                                speed: Speed, difficulty: Difficulty) -> None:
-        """Display final mission success screen"""
+        """Display final mission success screen with efficiency metrics"""
         self.console.clear()
         
-        # Title
+        # Title (Centered & Bold)
         title = Text()
         title.append("GRID-BASED ROBOT NAVIGATION\nWITH OBSTACLE AVOIDANCE\n", 
                      style=f"bold {ProfessionalTheme.MAGENTA}")
-        self.console.print(title, justify="center")
+        self.console.print(Align.center(title))
         
-        # Stats table
+        # Stats table with efficiency metric
         table = Table(title="[bold cyan]MISSION SUMMARY[/bold cyan]", 
-                     show_header=True, header_style=ProfessionalTheme.CYAN,
-                     border_style=ProfessionalTheme.MAGENTA)
+                     show_header=True, header_style=f"bold {ProfessionalTheme.CYAN}",
+                     border_style=ProfessionalTheme.MAGENTA, padding=(1, 2))
         table.add_column("Metric", style=ProfessionalTheme.CYAN)
         table.add_column("Value", style=ProfessionalTheme.WHITE)
         
         table.add_row("Difficulty Level", difficulty.name)
         table.add_row("Movement Speed", speed.name)
         table.add_row("Steps Taken", str(state.total_steps))
+        table.add_row("Shortest Path Efficiency", f"{state.total_steps} steps")
         table.add_row("Grid Size", f"{grid.size}×{grid.size}")
         table.add_row("Elapsed Time", f"{state.elapsed_time:.2f}s")
         
-        self.console.print(table)
+        self.console.print(Align.center(table))
         
         # Path summary
-        self.console.print(f"\n[bold cyan]PATH SUMMARY[/bold cyan]", justify="center")
-        self.console.print(f"[{ProfessionalTheme.NEON_GREEN}]Robot navigated from start (🤖) to goal (🎯) using A* pathfinding algorithm[/]")
+        self.console.print(f"\n[bold cyan]PATH SUMMARY[/bold cyan]")
+        self.console.print(f"[{ProfessionalTheme.NEON_GREEN}]Robot navigated from start (🤖) to goal (🎯) using A* pathfinding algorithm[/]", justify="center")
         
         # Final grid snapshot
         self.console.print(f"\n[bold cyan]FINAL GRID STATE[/bold cyan]")
@@ -372,23 +381,23 @@ class DashboardRenderer:
                 current_pos = Point(x, y)
                 
                 if current_pos == grid.goal:
-                    grid_text.append("🎯 ", style=ProfessionalTheme.RED)
+                    grid_text.append("🎯 ", style=f"bold {ProfessionalTheme.RED}")
                 elif grid.is_wall(x, y):
-                    grid_text.append("🧱 ", style=ProfessionalTheme.WHITE)
+                    grid_text.append("🧱 ", style=f"bold {ProfessionalTheme.WHITE}")
                 elif current_pos in set(state.path_taken):
-                    grid_text.append("🟩 ", style=ProfessionalTheme.NEON_GREEN)
+                    grid_text.append("🟩 ", style=f"bold {ProfessionalTheme.NEON_GREEN}")
                 else:
-                    grid_text.append("  ", style="dim")
+                    grid_text.append("_  ", style="dim")
             
             grid_text.append("\n")
         
-        self.console.print(grid_text)
+        self.console.print(Align.center(grid_text))
         
         # Termination message
         termination = Text()
         termination.append("SIMULATION TERMINATED: GOAL REACHED\n", 
                           style=f"bold {ProfessionalTheme.NEON_GREEN}")
-        self.console.print(termination, justify="center")
+        self.console.print(Align.center(termination))
 
 
 # ============================================================================
@@ -396,61 +405,76 @@ class DashboardRenderer:
 # ============================================================================
 
 class MenuSystem:
-    """Interactive selection menus"""
+    """Interactive selection menus using Prompt from Rich"""
+    
+    @staticmethod
+    def display_header() -> None:
+        """Display centered, bold header before menu"""
+        console = Console()
+        console.clear()
+        header = Text(
+            "GRID-BASED ROBOT NAVIGATION WITH OBSTACLE AVOIDANCE",
+            style=f"bold {ProfessionalTheme.MAGENTA}"
+        )
+        console.print(Align.center(header))
+        console.print()
     
     @staticmethod
     def select_difficulty() -> Difficulty:
-        """Menu to select difficulty level"""
+        """Menu to select difficulty level using Prompt"""
         console = Console()
-        console.clear()
+        MenuSystem.display_header()
         
-        title = Text("SELECT DIFFICULTY LEVEL", style=f"bold {ProfessionalTheme.CYAN}")
-        console.print(title, justify="center")
+        console.print("[bold cyan]SELECT DIFFICULTY LEVEL[/bold cyan]", justify="center")
         console.print()
         
-        options = [
-            ("1", "SLOW (10% walls)", Difficulty.SLOW),
-            ("2", "MEDIUM (25% walls)", Difficulty.MEDIUM),
-            ("3", "HARD (40% walls)", Difficulty.HARD),
-        ]
+        options = {
+            "1": ("SLOW (10% walls)", Difficulty.SLOW),
+            "2": ("MEDIUM (25% walls)", Difficulty.MEDIUM),
+            "3": ("HARD (40% walls)", Difficulty.HARD),
+        }
         
-        for key, label, _ in options:
-            console.print(f"  [{ProfessionalTheme.MAGENTA}]{key}[/]  {label}")
+        for key, (label, _) in options.items():
+            console.print(f"  [bold {ProfessionalTheme.MAGENTA}]{key}[/]  {label}")
         
         console.print()
         while True:
-            choice = console.input(f"[{ProfessionalTheme.CYAN}]Enter choice (1-3): [/]").strip()
-            for key, _, difficulty in options:
-                if choice == key:
-                    return difficulty
-            console.print(f"[{ProfessionalTheme.RED}]Invalid choice. Please try again.[/]")
+            choice = Prompt.ask(
+                f"[bold {ProfessionalTheme.CYAN}]Enter choice[/]",
+                choices=["1", "2", "3"],
+                default="2"
+            )
+            if choice in options:
+                return options[choice][1]
     
     @staticmethod
     def select_speed() -> Speed:
-        """Menu to select animation speed"""
+        """Menu to select animation speed using Prompt"""
         console = Console()
         console.clear()
+        MenuSystem.display_header()
         
-        title = Text("SELECT MOVEMENT SPEED", style=f"bold {ProfessionalTheme.MAGENTA}")
-        console.print(title, justify="center")
+        console.print("[bold cyan]SELECT MOVEMENT SPEED[/bold cyan]", justify="center")
         console.print()
         
-        options = [
-            ("1", "SLOW (200ms delay)", Speed.SLOW),
-            ("2", "NORMAL (100ms delay)", Speed.NORMAL),
-            ("3", "FAST (50ms delay)", Speed.FAST),
-        ]
+        options = {
+            "1": ("SLOW (200ms delay)", Speed.SLOW),
+            "2": ("NORMAL (100ms delay)", Speed.NORMAL),
+            "3": ("FAST (50ms delay)", Speed.FAST),
+        }
         
-        for key, label, _ in options:
-            console.print(f"  [{ProfessionalTheme.NEON_GREEN}]{key}[/]  {label}")
+        for key, (label, _) in options.items():
+            console.print(f"  [bold {ProfessionalTheme.NEON_GREEN}]{key}[/]  {label}")
         
         console.print()
         while True:
-            choice = console.input(f"[{ProfessionalTheme.CYAN}]Enter choice (1-3): [/]").strip()
-            for key, _, speed in options:
-                if choice == key:
-                    return speed
-            console.print(f"[{ProfessionalTheme.RED}]Invalid choice. Please try again.[/]")
+            choice = Prompt.ask(
+                f"[bold {ProfessionalTheme.CYAN}]Enter choice[/]",
+                choices=["1", "2", "3"],
+                default="2"
+            )
+            if choice in options:
+                return options[choice][1]
 
 
 # ============================================================================
@@ -465,12 +489,41 @@ class RobotNavigationSimulator:
         self.renderer = DashboardRenderer()
     
     def run(self) -> None:
-        """Execute the full simulation"""
-        # Select parameters
+        """Execute full simulation loop with replay capability"""
+        while True:
+            self._run_single_simulation()
+            
+            # Ask if user wants to run another simulation
+            self.console.clear()
+            replay_prompt = Text(
+                "Would you like to run another simulation?",
+                style=f"bold {ProfessionalTheme.CYAN}"
+            )
+            self.console.print(Align.center(replay_prompt))
+            self.console.print()
+            
+            choice = Prompt.ask(
+                "[bold cyan]Enter choice[/]",
+                choices=["yes", "no"],
+                default="yes"
+            ).lower()
+            
+            if choice == "no":
+                exit_text = Text(
+                    "Thank you for using GRID-BASED ROBOT NAVIGATION. Goodbye!",
+                    style=f"bold {ProfessionalTheme.NEON_GREEN}"
+                )
+                self.console.print(Align.center(exit_text))
+                break
+    
+    def _run_single_simulation(self) -> None:
+        """Execute a single simulation run"""
+        # Display header and get user selections
+        MenuSystem.display_header()
         difficulty = MenuSystem.select_difficulty()
         speed = MenuSystem.select_speed()
         
-        # Initialize
+        # Initialize grid and state
         config = GridConfig(size=12, difficulty=difficulty)
         grid = NavigationGrid(config)
         state = SimulationState()
@@ -478,7 +531,6 @@ class RobotNavigationSimulator:
         
         # Pre-simulation screen
         self.console.clear()
-        
         info_text = Text()
         info_text.append("GRID GENERATED\n", style=f"bold {ProfessionalTheme.CYAN}")
         info_text.append(f"Size: {grid.size}×{grid.size}\n", style=ProfessionalTheme.WHITE)
@@ -502,53 +554,70 @@ class RobotNavigationSimulator:
         if not grid.path:
             error = Text("ERROR: No path found!", style=f"bold {ProfessionalTheme.RED}")
             self.console.print(Align.center(error))
+            time.sleep(2)
             return
         
         state.total_steps = len(grid.path) - 1
         
-        # Run animation
+        # Run animation with Live refresh on every step
         self._run_animation(grid, state, speed)
         
         # Show success screen
         self.renderer.render_mission_success(grid, state, speed, difficulty)
+        
+        # Prompt for next action
+        self.console.print()
+        input("[bold cyan]Press ENTER to continue...[/bold cyan]")
     
     def _run_animation(self, grid: NavigationGrid, state: SimulationState, speed: Speed) -> None:
-        """Animate the robot following the path"""
+        """Animate robot following path with Live refresh on every step"""
         self.console.clear()
         
         # Direction mapping for logging
         direction_map = {
-            (-1, 0): "left",
-            (1, 0): "right",
-            (0, -1): "up",
-            (0, 1): "down"
+            (-1, 0): "LEFT",
+            (1, 0): "RIGHT",
+            (0, -1): "UP",
+            (0, 1): "DOWN"
         }
         
         start_time = time.time()
         
-        with Live(self.renderer.render_dashboard(grid, state, speed), 
-                 console=self.console, refresh_per_second=10):
-            
+        with Live(
+            self.renderer.render_dashboard(grid, state, speed),
+            console=self.console,
+            refresh_per_second=10,
+            screen=False
+        ) as live:
             for i, next_pos in enumerate(grid.path[1:], 1):
                 state.current_step = i
                 prev_pos = state.robot_pos
                 state.robot_pos = next_pos
-                state.path_taken.append(next_pos)
                 
-                # Log the move
+                # Add to path trail (mark where robot just came from)
+                if i > 1:
+                    state.path_taken.append(prev_pos)
+                
+                # Log the move with direction
                 dx = next_pos.x - prev_pos.x
                 dy = next_pos.y - prev_pos.y
-                direction = direction_map.get((dx, dy), "unknown")
+                direction = direction_map.get((dx, dy), "UNKNOWN")
                 move_log_entry = f"Move #{i}: {direction}"
                 state.move_log.append(move_log_entry)
                 
                 # Update telemetry
                 state.elapsed_time = time.time() - start_time
                 
-                # Wait for animation speed
+                # Refresh display on every step
+                live.update(self.renderer.render_dashboard(grid, state, speed))
+                
+                # Animation delay
                 time.sleep(speed.value / 1000.0)
         
         state.is_finished = True
+        
+        # Add final position to path
+        state.path_taken.append(grid.goal)
 
 
 # ============================================================================
