@@ -1,69 +1,103 @@
 #!/usr/bin/env python3
 """
-Robot Navigation AI Simulator
-A professional desktop application demonstrating A* pathfinding algorithm
-with a modern PySide6 GUI and Material Design theme.
+Robot Navigation AI Simulator - Professional Desktop Application
+A visually impressive desktop application demonstrating A* pathfinding algorithm
+with modern PySide6 GUI, Material Design theme, smooth animations, and real-time analytics.
+
+Installation: pip install pyside6 qt-material pyqtgraph
+Usage: python robot_navigation_simulator.py
 """
 
 import sys
+import os
 import math
-import threading
 import time
-from collections import deque
+import random
+import heapq
+import threading
+import json
+from enum import Enum
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Set
-from enum import Enum
+from collections import deque
 
 try:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QStackedWidget, QPushButton, QLabel, QGridLayout, QGraphicsScene,
-        QGraphicsView, QGraphicsRectItem, QGraphicsEllipseItem, QScrollArea,
-        QFrame, QComboBox, QGroupBox, QPlainTextEdit, QSpinBox
+        QGraphicsView, QGraphicsItem, QGraphicsRectItem, QGraphicsEllipseItem,
+        QGraphicsPathItem, QGraphicsPolygonItem, QScrollArea, QFrame,
+        QTextEdit, QRadioButton, QButtonGroup, QProgressBar, QMessageBox
     )
-    from PySide6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread, QSize, QRect, QPoint
-    from PySide6.QtGui import QColor, QFont, QPalette, QBrush, QPen, QIcon
-    from PySide6.QtCharts import QChart, QChartView, QLineSeries
-    import pyqtgraph as pg
+    from PySide6.QtCore import (
+        Qt, QTimer, pyqtSignal, QObject, QThread, QSize, QRect, QPoint,
+        QPointF, QLine, QLineF
+    )
+    from PySide6.QtGui import (
+        QColor, QFont, QPalette, QBrush, QPen, QIcon, QPainter,
+        QPolygonF, QLinearGradient, QRadialGradient
+    )
+
+    try:
+        import qt_material
+        QT_MATERIAL_AVAILABLE = True
+    except ImportError:
+        QT_MATERIAL_AVAILABLE = False
+
+    try:
+        import pyqtgraph as pg
+        pg.setConfigOption('background', 'w')
+        pg.setConfigOption('foreground', 'k')
+        PYQTGRAPH_AVAILABLE = True
+    except ImportError:
+        PYQTGRAPH_AVAILABLE = False
+
     PYSIDE6_AVAILABLE = True
-except ImportError:
+
+except ImportError as e:
     PYSIDE6_AVAILABLE = False
-    print("PySide6 not available. Will attempt browser fallback.")
+    print(f"Warning: PySide6 not available ({e}). Consider installing: pip install pyside6 qt-material pyqtgraph")
 
 
 # ============================================================================
-# Enums and Data Structures
+# Core Enums and Data Structures
 # ============================================================================
 
 class Difficulty(Enum):
-    """Simulation difficulty levels affecting obstacle density."""
-    EASY = 0.10
-    MEDIUM = 0.25
-    HARD = 0.40
+    """Simulation difficulty levels affecting obstacle density"""
+    EASY = 0.15
+    MEDIUM = 0.30
+    HARD = 0.50
 
 
-class Speed(Enum):
-    """Simulation speed levels affecting animation timing."""
+class SimulationSpeed(Enum):
+    """Speed settings for animation timing (milliseconds per step)"""
     SLOW = 500
     NORMAL = 200
     FAST = 50
 
 
 @dataclass
-class GridCell:
-    """Represents a single cell in the grid."""
+class Point:
+    """2D point representation"""
     x: int
     y: int
-    is_obstacle: bool = False
-    is_explored: bool = False
-    exploration_time: float = 0.0
-    is_path: bool = False
 
     def __hash__(self):
         return hash((self.x, self.y))
 
     def __eq__(self, other):
+        if not isinstance(other, Point):
+            return False
         return self.x == other.x and self.y == other.y
+
+    def distance_to(self, other: 'Point') -> float:
+        """Euclidean distance to another point"""
+        return math.sqrt((self.x - other.x) ** 2 + (self.y - other.y) ** 2)
+
+    def manhattan_distance(self, other: 'Point') -> int:
+        """Manhattan distance to another point"""
+        return abs(self.x - other.x) + abs(self.y - other.y)
 
 
 # ============================================================================
@@ -71,69 +105,76 @@ class GridCell:
 # ============================================================================
 
 class AStarPathfinder:
-    """Implements the A* pathfinding algorithm."""
-    
-    def __init__(self, grid_size: int, obstacles: Set[Tuple[int, int]]):
+    """Implements the A* pathfinding algorithm with real-time node tracking"""
+
+    def __init__(self, grid_size: int = 20):
         self.grid_size = grid_size
+        self.obstacles: Set[Point] = set()
+        self.explored_nodes: List[Point] = []
+        self.path: List[Point] = []
+
+    def set_obstacles(self, obstacles: Set[Point]):
+        """Set obstacle positions in the grid"""
         self.obstacles = obstacles
+
+    def heuristic(self, pos: Point, goal: Point) -> float:
+        """Manhattan distance heuristic for A*"""
+        return float(pos.manhattan_distance(goal))
+
+    def get_neighbors(self, pos: Point) -> List[Point]:
+        """Get valid neighboring cells (4-directional movement only)"""
+        neighbors = []
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        for dx, dy in directions:
+            new_x, new_y = pos.x + dx, pos.y + dy
+            if 0 <= new_x < self.grid_size and 0 <= new_y < self.grid_size:
+                new_pos = Point(new_x, new_y)
+                if new_pos not in self.obstacles:
+                    neighbors.append(new_pos)
+        return neighbors
+
+    def find_path(self, start: Point, goal: Point) -> List[Point]:
+        """Execute A* pathfinding algorithm"""
         self.explored_nodes = []
         self.path = []
-        
-    def heuristic(self, pos: Tuple[int, int], goal: Tuple[int, int]) -> float:
-        """Euclidean distance heuristic."""
-        return math.sqrt((pos[0] - goal[0])**2 + (pos[1] - goal[1])**2)
-    
-    def get_neighbors(self, pos: Tuple[int, int]) -> List[Tuple[int, int]]:
-        """Get valid neighboring cells (8-directional movement)."""
-        neighbors = []
-        x, y = pos
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
-                    continue
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size:
-                    if (nx, ny) not in self.obstacles:
-                        neighbors.append((nx, ny))
-        return neighbors
-    
-    def find_path(self, start: Tuple[int, int], goal: Tuple[int, int]) -> List[Tuple[int, int]]:
-        """Find path using A* algorithm and track exploration."""
-        open_set = {start}
+
+        open_set = []
+        heapq.heappush(open_set, (0, start))
         came_from = {}
         g_score = {start: 0}
         f_score = {start: self.heuristic(start, goal)}
-        
-        self.explored_nodes = []
-        
+        closed_set = set()
+
         while open_set:
-            current = min(open_set, key=lambda pos: f_score.get(pos, float('inf')))
-            
+            _, current = heapq.heappop(open_set)
+
+            if current in closed_set:
+                continue
+
             if current == goal:
-                self.path = self._reconstruct_path(came_from, current)
+                path = []
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                path.append(start)
+                self.path = list(reversed(path))
                 return self.path
-            
-            open_set.remove(current)
+
+            closed_set.add(current)
             self.explored_nodes.append(current)
-            
+
             for neighbor in self.get_neighbors(current):
+                if neighbor in closed_set:
+                    continue
+
                 tentative_g = g_score[current] + 1
-                
                 if neighbor not in g_score or tentative_g < g_score[neighbor]:
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g
                     f_score[neighbor] = tentative_g + self.heuristic(neighbor, goal)
-                    open_set.add(neighbor)
-        
+                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
+
         return []
-    
-    def _reconstruct_path(self, came_from: dict, current: Tuple[int, int]) -> List[Tuple[int, int]]:
-        """Reconstruct path from A* search."""
-        path = [current]
-        while current in came_from:
-            current = came_from[current]
-            path.append(current)
-        return list(reversed(path))
 
 
 # ============================================================================
@@ -141,31 +182,29 @@ class AStarPathfinder:
 # ============================================================================
 
 class GridEnvironment:
-    """Manages the grid environment with obstacles."""
-    
-    def __init__(self, size: int = 20, difficulty: Difficulty = Difficulty.MEDIUM):
+    """Manages the grid environment with obstacles"""
+
+    def __init__(self, size: int = 20, obstacle_density: float = 0.2):
         self.size = size
-        self.difficulty = difficulty
-        self.obstacles: Set[Tuple[int, int]] = set()
-        self.start_pos = (1, 1)
-        self.goal_pos = (size - 2, size - 2)
-        self._generate_obstacles()
-    
-    def _generate_obstacles(self):
-        """Generate random obstacles based on difficulty."""
-        import random
-        obstacle_count = int(self.size * self.size * self.difficulty.value)
-        while len(self.obstacles) < obstacle_count:
-            x = random.randint(0, self.size - 1)
-            y = random.randint(0, self.size - 1)
-            pos = (x, y)
-            if pos != self.start_pos and pos != self.goal_pos:
-                self.obstacles.add(pos)
-    
-    def is_valid(self, pos: Tuple[int, int]) -> bool:
-        """Check if position is valid."""
-        x, y = pos
-        return 0 <= x < self.size and 0 <= y < self.size and pos not in self.obstacles
+        self.obstacle_density = obstacle_density
+        self.obstacles: Set[Point] = set()
+        self.start = Point(1, 1)
+        self.goal = Point(size - 2, size - 2)
+        self.generate_obstacles()
+
+    def generate_obstacles(self):
+        """Generate random obstacles based on density"""
+        self.obstacles.clear()
+        for x in range(self.size):
+            for y in range(self.size):
+                if (Point(x, y) == self.start) or (Point(x, y) == self.goal):
+                    continue
+                if random.random() < self.obstacle_density:
+                    self.obstacles.add(Point(x, y))
+
+    def is_obstacle(self, point: Point) -> bool:
+        """Check if point is an obstacle"""
+        return point in self.obstacles
 
 
 # ============================================================================
@@ -173,808 +212,848 @@ class GridEnvironment:
 # ============================================================================
 
 class RobotAgent:
-    """Represents the robot navigating the grid."""
-    
-    def __init__(self, start_pos: Tuple[int, int]):
-        self.pos = start_pos
-        self.path = []
+    """Represents the robot navigating the grid"""
+
+    def __init__(self, start_pos: Point):
+        self.position = start_pos
+        self.path: List[Point] = []
+        self.path_index = 0
         self.step_count = 0
-        self.history = []
-    
-    def follow_path(self, path: List[Tuple[int, int]]):
-        """Set the path for the robot to follow."""
+        self.movement_history = []
+
+    def set_path(self, path: List[Point]):
+        """Set the path to follow"""
         self.path = path
+        self.path_index = 0
         self.step_count = 0
-        self.history = []
-    
-    def take_step(self) -> bool:
-        """Move to next position in path. Returns True if moved."""
-        if self.step_count < len(self.path):
-            self.pos = self.path[self.step_count]
+        self.movement_history = []
+
+    def move_to_next(self) -> bool:
+        """Move to next position on path. Returns True if moved."""
+        if self.path_index < len(self.path) - 1:
+            self.path_index += 1
+            prev_pos = self.path[self.path_index - 1]
+            self.position = self.path[self.path_index]
             self.step_count += 1
-            self._record_step()
+
+            dx = self.position.x - prev_pos.x
+            dy = self.position.y - prev_pos.y
+
+            if dx > 0:
+                direction = "RIGHT"
+            elif dx < 0:
+                direction = "LEFT"
+            elif dy > 0:
+                direction = "DOWN"
+            else:
+                direction = "UP"
+
+            self.movement_history.append(f"Step {self.step_count} → {direction}")
             return True
         return False
-    
-    def _record_step(self):
-        """Record movement in history."""
-        if len(self.path) > 1:
-            prev = self.path[self.step_count - 2] if self.step_count > 1 else self.path[0]
-            curr = self.pos
-            dx, dy = curr[0] - prev[0], curr[1] - prev[1]
-            direction = self._get_direction(dx, dy)
-            self.history.append(f"Step {self.step_count}: {direction}")
-    
-    @staticmethod
-    def _get_direction(dx: int, dy: int) -> str:
-        """Convert deltas to direction."""
-        directions = {
-            (0, -1): "UP", (0, 1): "DOWN",
-            (-1, 0): "LEFT", (1, 0): "RIGHT",
-            (-1, -1): "UP-LEFT", (-1, 1): "DOWN-LEFT",
-            (1, -1): "UP-RIGHT", (1, 1): "DOWN-RIGHT"
-        }
-        return directions.get((dx, dy), "MOVE")
+
+    def is_at_goal(self) -> bool:
+        """Check if robot reached the goal"""
+        return self.path_index == len(self.path) - 1
 
 
 # ============================================================================
-# Simulation Engine
+# Simulation Signals and Engine
 # ============================================================================
 
 class SimulationSignals(QObject):
-    """Signals emitted by simulation engine."""
-    step_taken = pyqtSignal(tuple)
-    cell_explored = pyqtSignal(tuple, float)
-    path_found = pyqtSignal(list)
-    simulation_complete = pyqtSignal(dict)
-    error_occurred = pyqtSignal(str)
+    """Signals emitted by simulation engine"""
+    robot_moved = pyqtSignal(int, int)
+    explored_updated = pyqtSignal(list)
+    simulation_finished = pyqtSignal(dict)
+    status_changed = pyqtSignal(str)
+    time_updated = pyqtSignal(float)
 
 
 class SimulationEngine(QThread):
-    """Manages the overall simulation in a background thread."""
-    
-    def __init__(self, grid: GridEnvironment, speed: Speed):
+    """Manages simulation execution in a separate thread"""
+
+    def __init__(self, grid: GridEnvironment, difficulty: Difficulty, speed: SimulationSpeed):
         super().__init__()
         self.grid = grid
+        self.difficulty = difficulty
         self.speed = speed
         self.signals = SimulationSignals()
-        self.robot = RobotAgent(grid.start_pos)
-        self.pathfinder = AStarPathfinder(grid.size, grid.obstacles)
-        self.is_running = False
-        self.is_paused = False
-        self.start_time = None
-        self.metrics = {}
-    
+        self.running = False
+        self.paused = False
+        self.robot = RobotAgent(grid.start)
+        self.pathfinder = AStarPathfinder(grid.size)
+        self.pathfinder.set_obstacles(grid.obstacles)
+        self.start_time = 0
+        self.elapsed_time = 0
+
     def run(self):
-        """Execute simulation in background thread."""
-        try:
-            self.is_running = True
-            self.start_time = time.time()
-            
-            # Find path using A*
-            path = self.pathfinder.find_path(self.grid.start_pos, self.grid.goal_pos)
-            
-            # Emit explored nodes
-            for i, node in enumerate(self.pathfinder.explored_nodes):
-                self.signals.cell_explored.emit(node, i / max(1, len(self.pathfinder.explored_nodes)))
-                time.sleep(self.speed.value / 1000.0)
-            
-            # Emit final path
-            self.signals.path_found.emit(path)
-            
-            # Follow path with robot
-            self.robot.follow_path(path)
-            while self.robot.take_step() and self.is_running:
-                self.signals.step_taken.emit(self.robot.pos)
-                if not self.is_paused:
-                    time.sleep(self.speed.value / 1000.0)
-                else:
-                    while self.is_paused and self.is_running:
-                        time.sleep(0.1)
-            
-            # Compile metrics
-            elapsed = time.time() - self.start_time
-            self.metrics = {
-                'path_length': len(path),
-                'steps_taken': self.robot.step_count,
-                'nodes_explored': len(self.pathfinder.explored_nodes),
-                'elapsed_time': elapsed,
-                'efficiency': len(path) / max(1, len(self.pathfinder.explored_nodes))
-            }
-            
-            self.signals.simulation_complete.emit(self.metrics)
-        
-        except Exception as e:
-            self.signals.error_occurred.emit(str(e))
-    
-    def pause(self):
-        """Pause the simulation."""
-        self.is_paused = True
-    
-    def resume(self):
-        """Resume the simulation."""
-        self.is_paused = False
-    
-    def stop(self):
-        """Stop the simulation."""
-        self.is_running = False
+        """Run the simulation"""
+        self.running = True
+        self.start_time = time.time()
+
+        self.signals.status_changed.emit("Finding optimal path...")
+        self.pathfinder.find_path(self.grid.start, self.grid.goal)
+
+        if not self.pathfinder.path:
+            self.signals.status_changed.emit("No path found!")
+            self.running = False
+            return
+
+        self.robot.set_path(self.pathfinder.path)
+
+        self.signals.status_changed.emit("Simulating robot movement...")
+
+        while self.running and self.robot.move_to_next():
+            if not self.paused:
+                self.elapsed_time = time.time() - self.start_time
+                self.signals.robot_moved.emit(self.robot.position.x, self.robot.position.y)
+                self.signals.explored_updated.emit(self.pathfinder.explored_nodes)
+                self.signals.time_updated.emit(self.elapsed_time)
+                self.msleep(int(self.speed.value))
+
+        if self.running:
+            self.signals.status_changed.emit("Simulation complete!")
+            self.emit_final_results()
+
+    def emit_final_results(self):
+        """Emit final simulation results"""
+        results = {
+            'total_steps': self.robot.step_count,
+            'path_length': len(self.pathfinder.path),
+            'nodes_explored': len(self.pathfinder.explored_nodes),
+            'elapsed_time': self.elapsed_time,
+            'efficiency': (len(self.pathfinder.path) / max(len(self.pathfinder.explored_nodes), 1)) * 100
+        }
+        self.signals.simulation_finished.emit(results)
+
+    def pause_simulation(self):
+        """Pause the simulation"""
+        self.paused = True
+
+    def resume_simulation(self):
+        """Resume the simulation"""
+        self.paused = False
+
+    def stop_simulation(self):
+        """Stop the simulation"""
+        self.running = False
 
 
 # ============================================================================
-# UI Screens
+# Grid Canvas Visualization
 # ============================================================================
 
-class WelcomeScreen(QWidget):
-    """Welcome screen with navigation options."""
-    
-    screen_changed = pyqtSignal(str)
-    
-    def __init__(self):
+class GridCanvasWidget(QGraphicsView):
+    """Custom graphics view for rendering the grid and simulation"""
+
+    def __init__(self, grid: GridEnvironment):
         super().__init__()
-        self.init_ui()
-    
-    def init_ui(self):
-        layout = QVBoxLayout()
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 60, 40, 60)
-        layout.addStretch()
-        
-        # Title
-        title = QLabel("Robot Navigation AI Simulator")
-        title_font = QFont()
-        title_font.setPointSize(32)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-        
-        # Subtitle
-        subtitle = QLabel("A* Pathfinding Visualization")
-        subtitle_font = QFont()
-        subtitle_font.setPointSize(16)
-        subtitle.setFont(subtitle_font)
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(subtitle)
-        
-        layout.addSpacing(30)
-        
-        # Buttons
-        btn_layout = QVBoxLayout()
-        btn_layout.setSpacing(15)
-        
-        btn_start = self._create_button("Start Simulation", self._on_start)
-        btn_about = self._create_button("About Project", self._on_about)
-        btn_exit = self._create_button("Exit", self._on_exit)
-        
-        btn_layout.addWidget(btn_start)
-        btn_layout.addWidget(btn_about)
-        btn_layout.addWidget(btn_exit)
-        
-        layout.addLayout(btn_layout)
-        layout.addStretch()
-        
-        self.setLayout(layout)
-    
-    def _create_button(self, text: str, callback) -> QPushButton:
-        """Create a styled button."""
-        btn = QPushButton(text)
-        btn.setFixedHeight(50)
-        btn.setFixedWidth(250)
-        btn_font = QFont()
-        btn_font.setPointSize(12)
-        btn.setFont(btn_font)
-        btn.clicked.connect(callback)
-        return btn
-    
-    def _on_start(self):
-        self.screen_changed.emit("config")
-    
-    def _on_about(self):
-        self.screen_changed.emit("about")
-    
-    def _on_exit(self):
-        sys.exit(0)
-
-
-class ConfigurationScreen(QWidget):
-    """Configuration screen for difficulty and speed selection."""
-    
-    simulation_started = pyqtSignal(Difficulty, Speed)
-    back_requested = pyqtSignal()
-    
-    def __init__(self):
-        super().__init__()
-        self.init_ui()
-    
-    def init_ui(self):
-        main_layout = QHBoxLayout()
-        main_layout.setSpacing(40)
-        main_layout.setContentsMargins(40, 40, 40, 40)
-        
-        # Left panel - Difficulty
-        left_panel = self._create_difficulty_panel()
-        main_layout.addWidget(left_panel)
-        
-        # Right panel - Speed
-        right_panel = self._create_speed_panel()
-        main_layout.addWidget(right_panel)
-        
-        layout = QVBoxLayout()
-        layout.addLayout(main_layout)
-        layout.addSpacing(20)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        
-        btn_back = QPushButton("Back")
-        btn_back.setFixedWidth(120)
-        btn_back.setFixedHeight(45)
-        btn_back.clicked.connect(self.back_requested.emit)
-        btn_layout.addWidget(btn_back)
-        
-        btn_start = QPushButton("Start Simulation")
-        btn_start.setFixedWidth(200)
-        btn_start.setFixedHeight(45)
-        btn_font = QFont()
-        btn_font.setPointSize(12)
-        btn_start.setFont(btn_font)
-        btn_start.clicked.connect(self._on_start)
-        btn_layout.addWidget(btn_start)
-        
-        layout.addLayout(btn_layout)
-        self.setLayout(layout)
-    
-    def _create_difficulty_panel(self) -> QGroupBox:
-        """Create difficulty selection panel."""
-        group = QGroupBox("Difficulty Level")
-        layout = QVBoxLayout()
-        
-        self.difficulty = Difficulty.MEDIUM
-        
-        for difficulty in Difficulty:
-            btn = QPushButton(difficulty.name)
-            btn.setCheckable(True)
-            btn.setFixedHeight(50)
-            if difficulty == Difficulty.MEDIUM:
-                btn.setChecked(True)
-            btn.clicked.connect(lambda checked, d=difficulty: self._set_difficulty(d))
-            layout.addWidget(btn)
-        
-        group.setLayout(layout)
-        return group
-    
-    def _create_speed_panel(self) -> QGroupBox:
-        """Create speed selection panel."""
-        group = QGroupBox("Simulation Speed")
-        layout = QVBoxLayout()
-        
-        self.speed = Speed.NORMAL
-        
-        for speed in Speed:
-            btn = QPushButton(speed.name)
-            btn.setCheckable(True)
-            btn.setFixedHeight(50)
-            if speed == Speed.NORMAL:
-                btn.setChecked(True)
-            btn.clicked.connect(lambda checked, s=speed: self._set_speed(s))
-            layout.addWidget(btn)
-        
-        group.setLayout(layout)
-        return group
-    
-    def _set_difficulty(self, difficulty: Difficulty):
-        self.difficulty = difficulty
-    
-    def _set_speed(self, speed: Speed):
-        self.speed = speed
-    
-    def _on_start(self):
-        self.simulation_started.emit(self.difficulty, self.speed)
-
-
-class SimulationDashboard(QWidget):
-    """Main simulation dashboard with grid visualization and controls."""
-    
-    back_requested = pyqtSignal()
-    
-    def __init__(self):
-        super().__init__()
-        self.grid = None
-        self.engine = None
-        self.scene = QGraphicsScene()
-        self.view = QGraphicsView(self.scene)
-        self.cell_size = 30
-        self.grid_graphics = {}
-        self.robot_graphic = None
-        self.init_ui()
-    
-    def init_ui(self):
-        layout = QHBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        
-        # Left panel - History
-        left_panel = self._create_history_panel()
-        layout.addWidget(left_panel, 1)
-        
-        # Center panel - Grid
-        self.view.setMinimumSize(700, 700)
-        layout.addWidget(self.view, 2)
-        
-        # Right panel - Telemetry
-        right_panel = self._create_telemetry_panel()
-        layout.addWidget(right_panel, 1)
-        
-        main_layout = QVBoxLayout()
-        main_layout.addLayout(layout)
-        main_layout.addWidget(self._create_control_panel())
-        
-        self.setLayout(main_layout)
-    
-    def _create_history_panel(self) -> QFrame:
-        """Create movement history panel."""
-        frame = QFrame()
-        frame.setStyleSheet("QFrame { border: 1px solid #ccc; background-color: #f5f5f5; }")
-        
-        layout = QVBoxLayout()
-        title = QLabel("Movement History")
-        title_font = QFont()
-        title_font.setBold(True)
-        title.setFont(title_font)
-        layout.addWidget(title)
-        
-        self.history_text = QPlainTextEdit()
-        self.history_text.setReadOnly(True)
-        layout.addWidget(self.history_text)
-        
-        frame.setLayout(layout)
-        return frame
-    
-    def _create_telemetry_panel(self) -> QFrame:
-        """Create telemetry information panel."""
-        frame = QFrame()
-        frame.setStyleSheet("QFrame { border: 1px solid #ccc; background-color: #f5f5f5; }")
-        
-        layout = QVBoxLayout()
-        title = QLabel("Telemetry")
-        title_font = QFont()
-        title_font.setBold(True)
-        title.setFont(title_font)
-        layout.addWidget(title)
-        
-        self.telemetry_labels = {}
-        for key in ["Position", "Steps", "Explored", "Time", "Speed", "Status"]:
-            label = QLabel(f"{key}: --")
-            self.telemetry_labels[key] = label
-            layout.addWidget(label)
-        
-        layout.addStretch()
-        frame.setLayout(layout)
-        return frame
-    
-    def _create_control_panel(self) -> QFrame:
-        """Create simulation control panel."""
-        frame = QFrame()
-        frame.setStyleSheet("QFrame { border-top: 1px solid #ccc; }")
-        
-        layout = QHBoxLayout()
-        layout.setSpacing(10)
-        
-        self.btn_pause = QPushButton("Pause")
-        self.btn_pause.clicked.connect(self._on_pause)
-        
-        self.btn_resume = QPushButton("Resume")
-        self.btn_resume.clicked.connect(self._on_resume)
-        self.btn_resume.setEnabled(False)
-        
-        btn_terminate = QPushButton("Terminate")
-        btn_terminate.clicked.connect(self._on_terminate)
-        
-        btn_retry = QPushButton("Retry Same Grid")
-        btn_retry.clicked.connect(self._on_retry)
-        
-        btn_new = QPushButton("Generate New Grid")
-        btn_new.clicked.connect(self._on_new_grid)
-        
-        btn_back = QPushButton("Back to Config")
-        btn_back.clicked.connect(self.back_requested.emit)
-        
-        layout.addWidget(self.btn_pause)
-        layout.addWidget(self.btn_resume)
-        layout.addWidget(btn_terminate)
-        layout.addWidget(btn_retry)
-        layout.addWidget(btn_new)
-        layout.addStretch()
-        layout.addWidget(btn_back)
-        
-        frame.setLayout(layout)
-        return frame
-    
-    def start_simulation(self, grid: GridEnvironment, engine: SimulationEngine):
-        """Start a new simulation."""
         self.grid = grid
-        self.engine = engine
-        self._draw_grid()
-        self._connect_engine_signals()
-        self.engine.start()
-    
-    def _draw_grid(self):
-        """Draw the initial grid."""
+        self.cell_size = 30
+        self.scene = QGraphicsScene()
+        self.setScene(self.scene)
+        self.setStyleSheet("background-color: #ffffff; border: 2px solid #ccc;")
+        self.setRenderHint(QPainter.Antialiasing)
+        self.explored_cells = {}
+        self.path_cells = set()
+        self.robot_item = None
+        self.draw_grid()
+
+    def draw_grid(self):
+        """Draw the initial grid with obstacles"""
         self.scene.clear()
-        self.grid_graphics = {}
-        
-        # Draw grid background
+        self.explored_cells.clear()
+        self.path_cells.clear()
+
         for x in range(self.grid.size):
             for y in range(self.grid.size):
                 rect = self.scene.addRect(
                     x * self.cell_size, y * self.cell_size,
                     self.cell_size, self.cell_size,
-                    QPen(QColor(200, 200, 200)),
-                    QBrush(QColor(255, 255, 255))
+                    QPen(QColor("#e0e0e0")), QBrush(QColor("#ffffff"))
                 )
-                self.grid_graphics[(x, y)] = {'rect': rect, 'explored': False}
-        
-        # Draw obstacles
-        for x, y in self.grid.obstacles:
-            self.grid_graphics[(x, y)]['rect'].setBrush(QBrush(QColor(50, 50, 50)))
-        
-        # Draw goal
-        goal_x, goal_y = self.grid.goal_pos
-        goal_rect = self.grid_graphics[(goal_x, goal_y)]['rect']
-        goal_rect.setBrush(QBrush(QColor(76, 175, 80)))
-        
-        # Draw robot
-        robot_x, robot_y = self.grid.start_pos
-        self.robot_graphic = self.scene.addEllipse(
-            robot_x * self.cell_size + 5,
-            robot_y * self.cell_size + 5,
-            self.cell_size - 10, self.cell_size - 10,
-            QPen(QColor(0, 0, 0)),
-            QBrush(QColor(33, 150, 243))
-        )
-        
-        self.view.fitInView(self.scene.itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
-    
-    def _connect_engine_signals(self):
-        """Connect engine signals to slots."""
-        self.engine.signals.cell_explored.connect(self._on_cell_explored)
-        self.engine.signals.step_taken.connect(self._on_robot_moved)
-        self.engine.signals.path_found.connect(self._on_path_found)
-        self.engine.signals.simulation_complete.connect(self._on_simulation_complete)
-    
-    def _on_cell_explored(self, pos: Tuple[int, int], progress: float):
-        """Handle cell exploration."""
-        if pos in self.grid_graphics:
-            rect = self.grid_graphics[pos]['rect']
-            rect.setBrush(QBrush(QColor(255, int(200 - progress * 100), 100)))
-            self.grid_graphics[pos]['explored'] = True
-    
-    def _on_robot_moved(self, pos: Tuple[int, int]):
-        """Handle robot movement."""
-        if self.robot_graphic:
-            x, y = pos
-            self.robot_graphic.setRect(
-                x * self.cell_size + 5,
-                y * self.cell_size + 5,
-                self.cell_size - 10, self.cell_size - 10
-            )
-        
-        self._update_telemetry(pos)
-        self._update_history()
-    
-    def _on_path_found(self, path: List[Tuple[int, int]]):
-        """Highlight the optimal path."""
-        for x, y in path:
-            if (x, y) != self.grid.start_pos and (x, y) != self.grid.goal_pos:
-                self.grid_graphics[(x, y)]['rect'].setBrush(QBrush(QColor(76, 175, 80)))
-    
-    def _on_simulation_complete(self, metrics: dict):
-        """Handle simulation completion."""
-        self.btn_pause.setEnabled(False)
-        self.btn_resume.setEnabled(False)
-        self.telemetry_labels["Status"].setText("Status: Complete")
-    
-    def _update_telemetry(self, robot_pos: Tuple[int, int]):
-        """Update telemetry display."""
-        if self.engine:
-            self.telemetry_labels["Position"].setText(f"Position: {robot_pos}")
-            self.telemetry_labels["Steps"].setText(f"Steps: {self.engine.robot.step_count}")
-            self.telemetry_labels["Explored"].setText(f"Explored: {len(self.engine.pathfinder.explored_nodes)}")
-            elapsed = time.time() - self.engine.start_time
-            self.telemetry_labels["Time"].setText(f"Time: {elapsed:.2f}s")
-            self.telemetry_labels["Speed"].setText(f"Speed: {self.engine.speed.name}")
-            self.telemetry_labels["Status"].setText("Status: Running")
-    
-    def _update_history(self):
-        """Update movement history display."""
-        if self.engine:
-            self.history_text.setPlainText("\n".join(self.engine.robot.history[-10:]))
-    
-    def _on_pause(self):
-        """Pause simulation."""
-        if self.engine:
-            self.engine.pause()
-            self.btn_pause.setEnabled(False)
-            self.btn_resume.setEnabled(True)
-    
-    def _on_resume(self):
-        """Resume simulation."""
-        if self.engine:
-            self.engine.resume()
-            self.btn_pause.setEnabled(True)
-            self.btn_resume.setEnabled(False)
-    
-    def _on_terminate(self):
-        """Terminate simulation."""
-        if self.engine:
-            self.engine.stop()
-            self.back_requested.emit()
-    
-    def _on_retry(self):
-        """Retry with same grid."""
-        if self.grid:
-            engine = SimulationEngine(self.grid, self.engine.speed if self.engine else Speed.NORMAL)
-            self.start_simulation(self.grid, engine)
-    
-    def _on_new_grid(self):
-        """Generate new grid."""
-        self.back_requested.emit()
+                rect.setZValue(0)
 
+        for obstacle in self.grid.obstacles:
+            rect = self.scene.addRect(
+                obstacle.x * self.cell_size, obstacle.y * self.cell_size,
+                self.cell_size, self.cell_size,
+                QPen(QColor("#555")), QBrush(QColor("#333333"))
+            )
+            rect.setZValue(1)
+
+        goal_rect = self.scene.addRect(
+            self.grid.goal.x * self.cell_size, self.grid.goal.y * self.cell_size,
+            self.cell_size, self.cell_size,
+            QPen(QColor("#ff6b6b"), 2), QBrush(QColor("#ffcdd2"))
+        )
+        goal_rect.setZValue(2)
+
+        self.draw_robot(self.grid.start)
+        self.fitInView(self.scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+    def draw_robot(self, pos: Point):
+        """Draw the robot at position"""
+        if self.robot_item:
+            self.scene.removeItem(self.robot_item)
+
+        robot_size = self.cell_size - 4
+        robot_rect = self.scene.addRect(
+            pos.x * self.cell_size + 2, pos.y * self.cell_size + 2,
+            robot_size, robot_size,
+            QPen(QColor("#2e7d32"), 2), QBrush(QColor("#66BB6A"))
+        )
+        robot_rect.setZValue(5)
+        self.robot_item = robot_rect
+
+    def update_explored_nodes(self, explored: List[Point]):
+        """Update visualization of explored nodes with gradient"""
+        for i, point in enumerate(explored):
+            if point not in self.explored_cells:
+                intensity = 100 + int(100 * (i / max(1, len(explored))))
+                color = QColor(100, 150, min(255, intensity))
+                rect = self.scene.addRect(
+                    point.x * self.cell_size + 1, point.y * self.cell_size + 1,
+                    self.cell_size - 2, self.cell_size - 2,
+                    QPen(color), QBrush(color)
+                )
+                rect.setZValue(1)
+                self.explored_cells[point] = rect
+
+    def highlight_path(self, path: List[Point]):
+        """Highlight the optimal path"""
+        for point in path:
+            if point != self.grid.start and point != self.grid.goal:
+                rect = self.scene.addRect(
+                    point.x * self.cell_size + 2, point.y * self.cell_size + 2,
+                    self.cell_size - 4, self.cell_size - 4,
+                    QPen(QColor("#2196F3"), 2), QBrush(QColor("#64B5F6"))
+                )
+                rect.setZValue(3)
+                self.path_cells.add(point)
+
+
+# ============================================================================
+# UI Screens - Welcome
+# ============================================================================
+
+class WelcomeScreen(QWidget):
+    """Welcome screen with navigation"""
+
+    start_simulation = pyqtSignal()
+    show_about = pyqtSignal()
+    exit_app = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+
+    def init_ui(self):
+        """Initialize UI"""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(40, 60, 40, 60)
+        layout.setSpacing(20)
+
+        title = QLabel("Robot Navigation AI Simulator")
+        title_font = QFont()
+        title_font.setPointSize(48)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        subtitle = QLabel("A* Pathfinding Visualization")
+        subtitle_font = QFont()
+        subtitle_font.setPointSize(24)
+        subtitle.setFont(subtitle_font)
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("color: #666; margin-bottom: 40px;")
+        layout.addWidget(subtitle)
+
+        layout.addSpacing(40)
+
+        btn_start = self.create_button("Start Simulation", "#4CAF50")
+        btn_start.clicked.connect(self.start_simulation.emit)
+        layout.addWidget(btn_start)
+
+        btn_about = self.create_button("About Project", "#2196F3")
+        btn_about.clicked.connect(self.show_about.emit)
+        layout.addWidget(btn_about)
+
+        btn_exit = self.create_button("Exit", "#f44336")
+        btn_exit.clicked.connect(self.exit_app.emit)
+        layout.addWidget(btn_exit)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def create_button(self, text: str, color: str) -> QPushButton:
+        """Create a styled button"""
+        btn = QPushButton(text)
+        btn.setFixedHeight(50)
+        btn_font = QFont()
+        btn_font.setPointSize(16)
+        btn_font.setBold(True)
+        btn.setFont(btn_font)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {color};
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                padding: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.adjust_color(color, 20)};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.adjust_color(color, -20)};
+            }}
+        """)
+        return btn
+
+    @staticmethod
+    def adjust_color(color: str, amount: int) -> str:
+        """Adjust color brightness"""
+        r = int(color[1:3], 16) + amount
+        g = int(color[3:5], 16) + amount
+        b = int(color[5:7], 16) + amount
+        r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+
+# ============================================================================
+# UI Screens - Simulation Dashboard
+# ============================================================================
+
+class SimulationDashboard(QWidget):
+    """Main simulation dashboard with grid visualization and controls"""
+
+    pause_simulation = pyqtSignal()
+    resume_simulation = pyqtSignal()
+    terminate_simulation = pyqtSignal()
+    retry_simulation = pyqtSignal()
+    new_grid_simulation = pyqtSignal()
+    back_to_config = pyqtSignal()
+
+    def __init__(self, grid: GridEnvironment):
+        super().__init__()
+        self.grid = grid
+        self.init_ui()
+
+    def init_ui(self):
+        """Initialize UI"""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        main_content = QHBoxLayout()
+        main_content.setSpacing(10)
+
+        main_content.addWidget(self.create_log_panel(), 1)
+        main_content.addWidget(self.create_canvas(), 2)
+        main_content.addWidget(self.create_telemetry_panel(), 1)
+
+        layout.addLayout(main_content, 1)
+        layout.addWidget(self.create_control_panel())
+
+        self.setLayout(layout)
+
+    def create_log_panel(self) -> QWidget:
+        """Create movement history log panel"""
+        panel = QFrame()
+        panel.setStyleSheet("background-color: #fafafa; border: 1px solid #e0e0e0; border-radius: 5px;")
+        layout = QVBoxLayout()
+
+        title = QLabel("Movement History")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(11)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setStyleSheet("""
+            QTextEdit {
+                background-color: white;
+                border: none;
+                font-family: Courier;
+                font-size: 10pt;
+            }
+        """)
+        layout.addWidget(self.log_text)
+
+        panel.setLayout(layout)
+        return panel
+
+    def create_canvas(self) -> QWidget:
+        """Create grid canvas"""
+        panel = QFrame()
+        panel.setStyleSheet("background-color: #fafafa; border: 1px solid #e0e0e0; border-radius: 5px;")
+        layout = QVBoxLayout()
+
+        title = QLabel("Grid Simulation")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(11)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        self.canvas = GridCanvasWidget(self.grid)
+        layout.addWidget(self.canvas)
+
+        panel.setLayout(layout)
+        return panel
+
+    def create_telemetry_panel(self) -> QWidget:
+        """Create telemetry information panel"""
+        panel = QFrame()
+        panel.setStyleSheet("background-color: #fafafa; border: 1px solid #e0e0e0; border-radius: 5px;")
+        layout = QVBoxLayout()
+
+        title = QLabel("Telemetry")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(11)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        self.telemetry_items = {}
+        for key in ['Robot Position', 'Steps Taken', 'Nodes Explored', 'Elapsed Time', 'Current Status']:
+            label = QLabel(key)
+            label_font = QFont()
+            label_font.setBold(True)
+            label_font.setPointSize(9)
+            label.setFont(label_font)
+            layout.addWidget(label)
+
+            value = QLabel("--")
+            value_font = QFont()
+            value_font.setPointSize(10)
+            value.setFont(value_font)
+            value.setStyleSheet("color: #2196F3; margin-left: 10px; margin-bottom: 15px;")
+            layout.addWidget(value)
+
+            self.telemetry_items[key] = value
+
+        layout.addStretch()
+        panel.setLayout(layout)
+        return panel
+
+    def create_control_panel(self) -> QWidget:
+        """Create control panel"""
+        panel = QFrame()
+        panel.setStyleSheet("background-color: #f5f5f5; border-top: 1px solid #e0e0e0; padding: 15px;")
+        layout = QHBoxLayout()
+
+        btn_pause = self.create_control_button("Pause", "#FF9800")
+        btn_pause.clicked.connect(self.pause_simulation.emit)
+        layout.addWidget(btn_pause)
+
+        btn_resume = self.create_control_button("Resume", "#4CAF50")
+        btn_resume.clicked.connect(self.resume_simulation.emit)
+        layout.addWidget(btn_resume)
+
+        btn_terminate = self.create_control_button("Terminate", "#f44336")
+        btn_terminate.clicked.connect(self.terminate_simulation.emit)
+        layout.addWidget(btn_terminate)
+
+        btn_retry = self.create_control_button("Retry Same Grid", "#9C27B0")
+        btn_retry.clicked.connect(self.retry_simulation.emit)
+        layout.addWidget(btn_retry)
+
+        btn_new = self.create_control_button("Generate New Grid", "#2196F3")
+        btn_new.clicked.connect(self.new_grid_simulation.emit)
+        layout.addWidget(btn_new)
+
+        panel.setLayout(layout)
+        panel.setFixedHeight(60)
+        return panel
+
+    @staticmethod
+    def create_control_button(text: str, color: str) -> QPushButton:
+        """Create a control button"""
+        btn = QPushButton(text)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {color};
+                color: white;
+                border: none;
+                border-radius: 3px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {WelcomeScreen.adjust_color(color, 20)};
+            }}
+        """)
+        return btn
+
+    def update_log(self, step: int, direction: str):
+        """Update movement log"""
+        log_text = self.log_text.toPlainText()
+        log_text += f"Step {step} → {direction}\n"
+        self.log_text.setText(log_text)
+        self.log_text.verticalScrollBar().setValue(
+            self.log_text.verticalScrollBar().maximum()
+        )
+
+    def update_telemetry(self, key: str, value: str):
+        """Update telemetry display"""
+        if key in self.telemetry_items:
+            self.telemetry_items[key].setText(value)
+
+    def update_robot_position(self, x: int, y: int):
+        """Update robot position display"""
+        old_pos = self.telemetry_items['Robot Position'].text()
+        try:
+            old_x, old_y = map(int, old_pos.split(', '))
+            if old_x == x and old_y == y:
+                return
+
+            dx = x - old_x
+            dy = y - old_y
+            if dx > 0:
+                direction = "RIGHT"
+            elif dx < 0:
+                direction = "LEFT"
+            elif dy > 0:
+                direction = "DOWN"
+            else:
+                direction = "UP"
+
+            steps = int(self.telemetry_items['Steps Taken'].text()) + 1
+        except:
+            direction = "START"
+            steps = 0
+
+        self.update_telemetry('Robot Position', f"{x}, {y}")
+        self.update_telemetry('Steps Taken', str(steps))
+        self.update_log(steps, direction)
+        self.canvas.draw_robot(Point(x, y))
+
+
+
+# ============================================================================
+# UI Screens - Analytics Summary
+# ============================================================================
 
 class AnalyticsSummaryScreen(QWidget):
-    """Analytics summary screen displayed after simulation."""
-    
-    back_requested = pyqtSignal()
-    
-    def __init__(self, metrics: dict, grid: GridEnvironment, engine: SimulationEngine):
+    """Analytics summary screen"""
+
+    back_to_config = pyqtSignal()
+
+    def __init__(self):
         super().__init__()
-        self.metrics = metrics
-        self.grid = grid
-        self.engine = engine
+        self.results = {}
         self.init_ui()
-    
+
     def init_ui(self):
+        """Initialize UI"""
         layout = QVBoxLayout()
         layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(20)
-        
-        # Title
+
         title = QLabel("Simulation Complete - Analytics Summary")
         title_font = QFont()
-        title_font.setPointSize(18)
+        title_font.setPointSize(28)
         title_font.setBold(True)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
-        
-        # Metrics grid
-        metrics_layout = self._create_metrics_display()
+
+        metrics_layout = QHBoxLayout()
+        metrics_layout.setSpacing(20)
+
+        self.metric_labels = {}
+        for metric in ['Total Steps', 'Path Length', 'Nodes Explored', 'Elapsed Time', 'Efficiency %']:
+            metric_panel = QFrame()
+            metric_panel.setStyleSheet("""
+                QFrame {
+                    background-color: #f5f5f5;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 5px;
+                    padding: 20px;
+                }
+            """)
+            metric_layout = QVBoxLayout()
+
+            label = QLabel(metric)
+            label_font = QFont()
+            label_font.setPointSize(12)
+            label_font.setBold(True)
+            label.setFont(label_font)
+            label.setAlignment(Qt.AlignCenter)
+            metric_layout.addWidget(label)
+
+            value = QLabel("--")
+            value_font = QFont()
+            value_font.setPointSize(24)
+            value_font.setBold(True)
+            value.setFont(value_font)
+            value.setAlignment(Qt.AlignCenter)
+            value.setStyleSheet("color: #2196F3;")
+            metric_layout.addWidget(value)
+
+            self.metric_labels[metric] = value
+            metric_panel.setLayout(metric_layout)
+            metrics_layout.addWidget(metric_panel)
+
         layout.addLayout(metrics_layout)
-        
-        layout.addSpacing(20)
-        
-        # Back button
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        btn_back = QPushButton("Return to Welcome")
-        btn_back.setFixedWidth(200)
+
+        btn_back = QPushButton("Back to Configuration")
         btn_back.setFixedHeight(45)
-        btn_back.clicked.connect(self.back_requested.emit)
-        btn_layout.addWidget(btn_back)
-        layout.addLayout(btn_layout)
-        
+        btn_back_font = QFont()
+        btn_back_font.setPointSize(12)
+        btn_back_font.setBold(True)
+        btn_back.setFont(btn_back_font)
+        btn_back.setStyleSheet("""
+            QPushButton {
+                background-color: #757575;
+                color: white;
+                border: none;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #9e9e9e;
+            }
+        """)
+        btn_back.clicked.connect(self.back_to_config.emit)
+        layout.addWidget(btn_back)
+
         self.setLayout(layout)
-    
-    def _create_metrics_display(self) -> QHBoxLayout:
-        """Create metrics display."""
-        layout = QHBoxLayout()
-        layout.setSpacing(30)
-        
-        metrics_data = [
-            ("Total Steps", str(self.metrics.get('steps_taken', 0))),
-            ("Path Length", str(self.metrics.get('path_length', 0))),
-            ("Nodes Explored", str(self.metrics.get('nodes_explored', 0))),
-            ("Elapsed Time", f"{self.metrics.get('elapsed_time', 0):.2f}s"),
-            ("Efficiency", f"{self.metrics.get('efficiency', 0):.2f}"),
-        ]
-        
-        for label, value in metrics_data:
-            frame = QFrame()
-            frame.setStyleSheet("QFrame { border: 1px solid #ccc; border-radius: 5px; background-color: #f5f5f5; padding: 10px; }")
-            
-            vbox = QVBoxLayout()
-            lbl = QLabel(label)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_font = QFont()
-            lbl_font.setPointSize(10)
-            lbl.setFont(lbl_font)
-            
-            val = QLabel(value)
-            val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            val_font = QFont()
-            val_font.setPointSize(16)
-            val_font.setBold(True)
-            val.setFont(val_font)
-            
-            vbox.addWidget(lbl)
-            vbox.addWidget(val)
-            frame.setLayout(vbox)
-            layout.addWidget(frame)
-        
-        return layout
+
+    def set_results(self, results: dict):
+        """Set and display results"""
+        self.results = results
+        self.metric_labels['Total Steps'].setText(str(results.get('total_steps', 0)))
+        self.metric_labels['Path Length'].setText(str(results.get('path_length', 0)))
+        self.metric_labels['Nodes Explored'].setText(str(results.get('nodes_explored', 0)))
+        elapsed = results.get('elapsed_time', 0)
+        self.metric_labels['Elapsed Time'].setText(f"{elapsed:.2f}s")
+        efficiency = results.get('efficiency', 0)
+        self.metric_labels['Efficiency %'].setText(f"{efficiency:.1f}%")
 
 
 # ============================================================================
-# Main Window
+# Main Application Window
 # ============================================================================
 
 class MainWindow(QMainWindow):
-    """Main application window."""
-    
+    """Main application window"""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Robot Navigation AI Simulator")
-        self.setGeometry(100, 100, 1200, 800)
-        
+        self.setGeometry(100, 100, 1400, 900)
+
+        self.current_grid = None
+        self.simulation_thread = None
+        self.last_difficulty = Difficulty.MEDIUM
+        self.last_speed = SimulationSpeed.NORMAL
+
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
-        
-        # Initialize screens
+
         self.welcome_screen = WelcomeScreen()
-        self.welcome_screen.screen_changed.connect(self._on_screen_changed)
-        
         self.config_screen = ConfigurationScreen()
-        self.config_screen.simulation_started.connect(self._on_simulation_started)
-        self.config_screen.back_requested.connect(self._show_welcome)
-        
-        self.dashboard = SimulationDashboard()
-        self.dashboard.back_requested.connect(self._show_config)
-        
+        self.analytics_screen = AnalyticsSummaryScreen()
+
         self.stacked_widget.addWidget(self.welcome_screen)
         self.stacked_widget.addWidget(self.config_screen)
-        self.stacked_widget.addWidget(self.dashboard)
-        
-        self._show_welcome()
-    
-    def _show_welcome(self):
-        self.stacked_widget.setCurrentWidget(self.welcome_screen)
-    
-    def _show_config(self):
-        self.stacked_widget.setCurrentWidget(self.config_screen)
-    
-    def _on_screen_changed(self, screen: str):
-        if screen == "config":
-            self._show_config()
-        elif screen == "about":
-            self._show_about()
-    
-    def _show_about(self):
-        from PySide6.QtWidgets import QMessageBox
+        self.stacked_widget.addWidget(self.analytics_screen)
+
+        self.setup_connections()
+        self.apply_theme()
+        self.stacked_widget.setCurrentIndex(0)
+
+    def setup_connections(self):
+        """Setup signal connections"""
+        self.welcome_screen.start_simulation.connect(self.on_start_simulation)
+        self.welcome_screen.exit_app.connect(self.close)
+        self.welcome_screen.show_about.connect(self.show_about_dialog)
+
+        self.config_screen.start_simulation_with_config.connect(self.start_simulation)
+        self.config_screen.back_to_welcome.connect(
+            lambda: self.stacked_widget.setCurrentIndex(0)
+        )
+
+        self.analytics_screen.back_to_config.connect(self.on_back_to_config)
+
+    def on_start_simulation(self):
+        """Transition to configuration screen"""
+        self.stacked_widget.setCurrentIndex(1)
+
+    def start_simulation(self, difficulty: Difficulty, speed: SimulationSpeed):
+        """Start the simulation"""
+        self.current_grid = GridEnvironment(size=20, obstacle_density=difficulty.value)
+        self.simulation_dashboard = SimulationDashboard(self.current_grid)
+
+        self.setup_dashboard_connections()
+
+        self.stacked_widget.insertWidget(2, self.simulation_dashboard)
+        self.stacked_widget.setCurrentIndex(2)
+
+        self.start_simulation_engine(speed)
+
+    def setup_dashboard_connections(self):
+        """Setup dashboard signal connections"""
+        self.simulation_dashboard.pause_simulation.connect(self.pause_simulation)
+        self.simulation_dashboard.resume_simulation.connect(self.resume_simulation)
+        self.simulation_dashboard.terminate_simulation.connect(self.terminate_simulation)
+        self.simulation_dashboard.retry_simulation.connect(
+            lambda: self.start_simulation(
+                self.last_difficulty, self.last_speed
+            )
+        )
+        self.simulation_dashboard.new_grid_simulation.connect(
+            lambda: self.start_simulation(
+                self.last_difficulty, self.last_speed
+            )
+        )
+
+    def start_simulation_engine(self, speed: SimulationSpeed):
+        """Start the simulation engine thread"""
+        self.last_difficulty = self.config_screen.difficulty
+        self.last_speed = speed
+
+        self.simulation_thread = SimulationEngine(self.current_grid, self.last_difficulty, speed)
+
+        self.simulation_thread.signals.robot_moved.connect(self.on_robot_moved)
+        self.simulation_thread.signals.explored_updated.connect(self.on_explored_updated)
+        self.simulation_thread.signals.simulation_finished.connect(self.on_simulation_finished)
+        self.simulation_thread.signals.status_changed.connect(self.on_status_changed)
+        self.simulation_thread.signals.time_updated.connect(self.on_time_updated)
+
+        self.simulation_dashboard.update_telemetry('Current Status', 'Initializing...')
+        self.simulation_dashboard.update_telemetry('Robot Position', f'{self.current_grid.start.x}, {self.current_grid.start.y}')
+        self.simulation_dashboard.update_telemetry('Steps Taken', '0')
+        self.simulation_dashboard.update_telemetry('Nodes Explored', '0')
+        self.simulation_dashboard.update_telemetry('Elapsed Time', '0.00s')
+
+        self.simulation_thread.start()
+
+    def on_robot_moved(self, x: int, y: int):
+        """Handle robot movement"""
+        if self.simulation_dashboard:
+            self.simulation_dashboard.update_robot_position(x, y)
+
+    def on_explored_updated(self, explored: List[Point]):
+        """Handle explored nodes update"""
+        if self.simulation_dashboard:
+            self.simulation_dashboard.canvas.update_explored_nodes(explored)
+            nodes_count = len(explored)
+            self.simulation_dashboard.update_telemetry('Nodes Explored', str(nodes_count))
+
+    def on_simulation_finished(self, results: dict):
+        """Handle simulation completion"""
+        if self.simulation_dashboard:
+            self.simulation_dashboard.update_telemetry('Current Status', 'Complete')
+            self.simulation_dashboard.canvas.highlight_path(
+                self.simulation_thread.pathfinder.path
+            )
+
+        self.analytics_screen.set_results(results)
+        self.stacked_widget.setCurrentIndex(3)
+
+    def on_status_changed(self, status: str):
+        """Handle status change"""
+        if self.simulation_dashboard:
+            self.simulation_dashboard.update_telemetry('Current Status', status)
+
+    def on_time_updated(self, elapsed: float):
+        """Handle time update"""
+        if self.simulation_dashboard:
+            self.simulation_dashboard.update_telemetry('Elapsed Time', f"{elapsed:.2f}s")
+
+    def pause_simulation(self):
+        """Pause the simulation"""
+        if self.simulation_thread:
+            self.simulation_thread.pause_simulation()
+
+    def resume_simulation(self):
+        """Resume the simulation"""
+        if self.simulation_thread:
+            self.simulation_thread.resume_simulation()
+
+    def terminate_simulation(self):
+        """Terminate the simulation"""
+        if self.simulation_thread:
+            self.simulation_thread.stop_simulation()
+            self.simulation_thread.wait()
+
+    def on_back_to_config(self):
+        """Handle back to configuration"""
+        if self.simulation_thread:
+            self.simulation_thread.stop_simulation()
+            self.simulation_thread.wait()
+        self.stacked_widget.setCurrentIndex(1)
+
+    def show_about_dialog(self):
+        """Show about dialog"""
         QMessageBox.information(
             self,
             "About Robot Navigation AI Simulator",
-            "A professional demonstration of A* pathfinding algorithm.\n\n"
+            "Professional AI Robot Navigation Simulator\n\n"
             "Features:\n"
-            "• A* pathfinding visualization\n"
-            "• Adjustable difficulty levels\n"
-            "• Real-time animation\n"
-            "• Performance analytics\n\n"
-            "Built with PySide6 and Material Design"
+            "• A* Pathfinding Algorithm\n"
+            "• Real-time Grid Visualization\n"
+            "• Multiple Difficulty Levels\n"
+            "• Performance Analytics\n\n"
+            "Powered by PySide6 & Material Design"
         )
-    
-    def _on_simulation_started(self, difficulty: Difficulty, speed: Speed):
-        # Create grid and engine
-        grid = GridEnvironment(size=20, difficulty=difficulty)
-        engine = SimulationEngine(grid, speed)
-        
-        # Start simulation
-        self.dashboard.start_simulation(grid, engine)
-        self.stacked_widget.addWidget(self.dashboard)
-        self.stacked_widget.setCurrentWidget(self.dashboard)
-        
-        # Handle completion
-        engine.signals.simulation_complete.connect(
-            lambda metrics: self._show_analytics(metrics, grid, engine)
-        )
-    
-    def _show_analytics(self, metrics: dict, grid: GridEnvironment, engine: SimulationEngine):
-        analytics = AnalyticsSummaryScreen(metrics, grid, engine)
-        analytics.back_requested.connect(self._show_welcome)
-        self.stacked_widget.addWidget(analytics)
-        self.stacked_widget.setCurrentWidget(analytics)
+
+    def apply_theme(self):
+        """Apply modern theme"""
+        if QT_MATERIAL_AVAILABLE:
+            try:
+                qt_material.apply_stylesheet(self, theme='light_blue.xml')
+            except:
+                pass
+
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #fafafa;
+            }
+            QLabel {
+                color: #333;
+            }
+        """)
+
+    def closeEvent(self, event):
+        """Handle window close"""
+        if self.simulation_thread:
+            self.simulation_thread.stop_simulation()
+            self.simulation_thread.wait()
+        event.accept()
 
 
 # ============================================================================
 # Application Entry Point
 # ============================================================================
 
-def run_desktop_app():
-    """Run the PySide6 desktop application."""
+def main():
+    """Application entry point"""
+    if not PYSIDE6_AVAILABLE:
+        print("ERROR: PySide6 is required but not installed.")
+        print("Install dependencies with: pip install pyside6 qt-material pyqtgraph")
+        sys.exit(1)
+
     app = QApplication(sys.argv)
-    
-    try:
-        import qt_material
-        qt_material.apply_stylesheet(app, theme='light_blue.xml')
-    except ImportError:
-        pass
-    
+
+    if QT_MATERIAL_AVAILABLE:
+        try:
+            qt_material.apply_stylesheet(app, theme='light_blue.xml')
+        except:
+            pass
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
 
 
-def run_web_fallback():
-    """Run browser-based fallback interface."""
-    try:
-        from flask import Flask, render_template_string
-        import webbrowser
-        
-        app = Flask(__name__)
-        
-        html_content = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Robot Navigation AI Simulator</title>
-            <style>
-                * { margin: 0; padding: 0; box-sizing: border-box; }
-                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-                .container { background: white; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); padding: 40px; text-align: center; max-width: 600px; }
-                h1 { color: #333; font-size: 2.5em; margin-bottom: 10px; }
-                .subtitle { color: #666; font-size: 1.2em; margin-bottom: 40px; }
-                .button-group { display: flex; flex-direction: column; gap: 15px; }
-                button { padding: 15px 40px; font-size: 1.1em; border: none; border-radius: 5px; cursor: pointer; transition: all 0.3s; }
-                .btn-primary { background: #667eea; color: white; }
-                .btn-primary:hover { background: #5568d3; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-                .btn-secondary { background: #f0f0f0; color: #333; }
-                .btn-secondary:hover { background: #e0e0e0; }
-                .info { background: #f5f5f5; padding: 20px; border-radius: 5px; margin-top: 30px; text-align: left; }
-                .info h3 { color: #333; margin-bottom: 10px; }
-                .info p { color: #666; margin-bottom: 8px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>⚙️ Robot Navigation AI Simulator</h1>
-                <p class="subtitle">A* Pathfinding Visualization</p>
-                <div class="button-group">
-                    <button class="btn-primary">Start Simulation</button>
-                    <button class="btn-secondary">Configuration</button>
-                    <button class="btn-secondary">About Project</button>
-                </div>
-                <div class="info">
-                    <h3>Note:</h3>
-                    <p>The desktop GUI environment is not available on this system. The application is running in browser-based mode, which provides the same simulation experience with interactive controls and visualizations.</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        @app.route('/')
-        def index():
-            return render_template_string(html_content)
-        
-        webbrowser.open('http://localhost:5000')
-        app.run(port=5000, debug=False)
-    
-    except ImportError:
-        print("Flask not available. Please install: pip install flask")
-        print("\nAlternatively, ensure PySide6 is installed: pip install pyside6 qt-material pyqtgraph")
-        sys.exit(1)
-
-
-def main():
-    """Main entry point."""
-    if PYSIDE6_AVAILABLE:
-        try:
-            run_desktop_app()
-        except Exception as e:
-            print(f"Desktop app failed: {e}. Falling back to browser interface...")
-            run_web_fallback()
-    else:
-        print("PySide6 not available. Launching browser-based interface...")
-        run_web_fallback()
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
